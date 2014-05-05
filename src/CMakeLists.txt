@@ -269,23 +269,19 @@ foreach(test ${TESTS})
   # Check for running standard tests (no valgrind, no gcov)
   if(NOT ${MEM_CHECK} AND NOT ${COVERAGE})
 
-    # Check serial/parallel
+    # Clear strings
+    set(mpi_string "")
+
+    # Check for MPI and add test information
     if (${MPI_ENABLED})
+      set(mpi_string --exe $<TARGET_FILE:openmc> --mpi_exec
+          $ENV{MPI_DIR}/bin/mpiexec)
+    endif()
 
-      # Preform a parallel test
-      add_test(NAME ${TEST_NAME} 
-        WORKING_DIRECTORY ${TEST_PATH} 
-        COMMAND ${PYTHON_EXECUTABLE} ${TEST_NAME} --exe $<TARGET_FILE:openmc>
-        --mpi_exec $ENV{MPI_DIR}/bin/mpiexec)
-
-    else(${MPI_ENABLED})
-
-      # Perform a serial test
-      add_test(NAME ${TEST_NAME} 
-        WORKING_DIRECTORY ${TEST_PATH}
-        COMMAND ${PYTHON_EXECUTABLE} ${TEST_NAME} --exe $<TARGET_FILE:openmc>)
-
-    endif(${MPI_ENABLED})
+    # Preform a test
+    add_test(NAME ${TEST_NAME} 
+      WORKING_DIRECTORY ${TEST_PATH} 
+      COMMAND ${PYTHON_EXECUTABLE} ${TEST_NAME} ${mpi_string}) 
 
   # Handle special case for valgrind and gcov (run openmc directly, no python)
   else(NOT ${MEM_CHECK} AND NOT ${COVERAGE})
