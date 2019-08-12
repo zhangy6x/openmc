@@ -6,27 +6,52 @@ Data File ENDF-6". The latest version from June 2009 can be found at
 http://www-nds.iaea.org/ndspub/documents/endf/endf102/endf102.pdf
 
 """
-from __future__ import print_function, division, unicode_literals
-
 import io
 import re
 import os
 from math import pi
-from collections import OrderedDict, Iterable
+from pathlib import PurePath
+from collections import OrderedDict
+from collections.abc import Iterable
 
-from six import string_types
 import numpy as np
 from numpy.polynomial.polynomial import Polynomial
 
-from .data import ATOMIC_SYMBOL
+from .data import ATOMIC_SYMBOL, gnd_name
 from .function import Tabulated1D, INTERPOLATION_SCHEME
 from openmc.stats.univariate import Uniform, Tabular, Legendre
+try:
+    from ._endf import float_endf
+    _CYTHON = True
+except ImportError:
+    _CYTHON = False
 
 
-LIBRARIES = {0: 'ENDF/B', 1: 'ENDF/A', 2: 'JEFF', 3: 'EFF',
-             4: 'ENDF/B High Energy', 5: 'CENDL', 6: 'JENDL',
-             31: 'INDL/V', 32: 'INDL/A', 33: 'FENDL', 34: 'IRDF',
-             35: 'BROND', 36: 'INGDB-90', 37: 'FENDL/A', 41: 'BROND'}
+_LIBRARY = {0: 'ENDF/B', 1: 'ENDF/A', 2: 'JEFF', 3: 'EFF',
+            4: 'ENDF/B High Energy', 5: 'CENDL', 6: 'JENDL',
+            17: 'TENDL', 18: 'ROSFOND', 21: 'SG-21', 31: 'INDL/V',
+            32: 'INDL/A', 33: 'FENDL', 34: 'IRDF', 35: 'BROND',
+            36: 'INGDB-90', 37: 'FENDL/A', 41: 'BROND'}
+
+_SUBLIBRARY = {
+    0: 'Photo-nuclear data',
+    1: 'Photo-induced fission product yields',
+    3: 'Photo-atomic data',
+    4: 'Radioactive decay data',
+    5: 'Spontaneous fission product yields',
+    6: 'Atomic relaxation data',
+    10: 'Incident-neutron data',
+    11: 'Neutron-induced fission product yields',
+    12: 'Thermal neutron scattering data',
+    19: 'Neutron standards',
+    113: 'Electro-atomic data',
+    10010: 'Incident-proton data',
+    10011: 'Proton-induced fission product yields',
+    10020: 'Incident-deuteron data',
+    10030: 'Incident-triton data',
+    20030: 'Incident-helion (3He) data',
+    20040: 'Incident-alpha data'
+}
 
 SUM_RULES = {1: [2, 3],
              3: [4, 5, 11, 16, 17, 22, 23, 24, 25, 27, 28, 29, 30, 32, 33, 34, 35,
@@ -46,10 +71,10 @@ SUM_RULES = {1: [2, 3],
              106: list(range(750, 800)),
              107: list(range(800, 850))}
 
-ENDF_FLOAT_RE = re.compile(r'([\s\-\+]?\d*\.\d+)([\+\-]\d+)')
+ENDF_FLOAT_RE = re.compile(r'([\s\-\+]?\d*\.\d+)([\+\-]) ?(\d+)')
 
 
-def float_endf(s):
+def py_float_endf(s):
     """Convert string of floating point number in ENDF to float.
 
     The ENDF-6 format uses an 'e-less' floating point number format,
@@ -69,7 +94,31 @@ def float_endf(s):
         The number
 
     """
-    return float(ENDF_FLOAT_RE.sub(r'\1e\2', s))
+    return float(ENDF_FLOAT_RE.sub(r'\1e\2\3', s))
+
+
+if not _CYTHON:
+    float_endf = py_float_endf
+
+
+def int_endf(s):
+    """Convert string of integer number in ENDF to int.
+
+    The ENDF-6 format technically allows integers to be represented by a field
+    of all blanks. This function acts like int(s) except when s is a string of
+    all whitespace, in which case zero is returned.
+
+    Parameters
+    ----------
+    s : str
+        Integer or spaces
+
+    Returns
+    -------
+    integer
+        The number or 0
+    """
+    return 0 if s.isspace() else int(s)
 
 
 def get_text_record(file_obj):
@@ -89,35 +138,35 @@ def get_text_record(file_obj):
     return file_obj.readline()[:66]
 
 
-def get_cont_record(file_obj, skipC=False):
+def get_cont_record(file_obj, skip_c=False):
     """Return data from a CONT record in an ENDF-6 file.
 
     Parameters
     ----------
     file_obj : file-like object
         ENDF-6 file to read from
-    skipC : bool
+    skip_c : bool
         Determine whether to skip the first two quantities (C1, C2) of the CONT
         record.
 
     Returns
     -------
-    list
+    tuple
         The six items within the CONT record
 
     """
     line = file_obj.readline()
-    if skipC:
+    if skip_c:
         C1 = None
         C2 = None
     else:
         C1 = float_endf(line[:11])
         C2 = float_endf(line[11:22])
-    L1 = int(line[22:33])
-    L2 = int(line[33:44])
-    N1 = int(line[44:55])
-    N2 = int(line[55:66])
-    return [C1, C2, L1, L2, N1, N2]
+    L1 = int_endf(line[22:33])
+    L2 = int_endf(line[33:44])
+    N1 = int_endf(line[44:55])
+    N2 = int_endf(line[55:66])
+    return (C1, C2, L1, L2, N1, N2)
 
 
 def get_head_record(file_obj):
@@ -130,18 +179,18 @@ def get_head_record(file_obj):
 
     Returns
     -------
-    list
+    tuple
         The six items within the HEAD record
 
     """
     line = file_obj.readline()
     ZA = int(float_endf(line[:11]))
     AWR = float_endf(line[11:22])
-    L1 = int(line[22:33])
-    L2 = int(line[33:44])
-    N1 = int(line[44:55])
-    N2 = int(line[55:66])
-    return [ZA, AWR, L1, L2, N1, N2]
+    L1 = int_endf(line[22:33])
+    L2 = int_endf(line[33:44])
+    N1 = int_endf(line[44:55])
+    N2 = int_endf(line[55:66])
+    return (ZA, AWR, L1, L2, N1, N2)
 
 
 def get_list_record(file_obj):
@@ -195,10 +244,10 @@ def get_tab1_record(file_obj):
     line = file_obj.readline()
     C1 = float_endf(line[:11])
     C2 = float_endf(line[11:22])
-    L1 = int(line[22:33])
-    L2 = int(line[33:44])
-    n_regions = int(line[44:55])
-    n_pairs = int(line[55:66])
+    L1 = int_endf(line[22:33])
+    L2 = int_endf(line[33:44])
+    n_regions = int_endf(line[44:55])
+    n_pairs = int_endf(line[55:66])
     params = [C1, C2, L1, L2]
 
     # Read the interpolation region data, namely NBT and INT
@@ -209,8 +258,8 @@ def get_tab1_record(file_obj):
         line = file_obj.readline()
         to_read = min(3, n_regions - m)
         for j in range(to_read):
-            breakpoints[m] = int(line[0:11])
-            interpolation[m] = int(line[11:22])
+            breakpoints[m] = int_endf(line[0:11])
+            interpolation[m] = int_endf(line[11:22])
             line = line[22:]
             m += 1
 
@@ -250,6 +299,51 @@ def get_tab2_record(file_obj):
 
     return params, Tabulated2D(breakpoints, interpolation)
 
+
+def get_intg_record(file_obj):
+    """
+    Return data from an INTG record in an ENDF-6 file. Used to store the
+    covariance matrix in a compact format.
+
+    Parameters
+    ----------
+    file_obj : file-like object
+        ENDF-6 file to read from
+
+    Returns
+    -------
+    numpy.ndarray
+        The correlation matrix described in the INTG record
+    """
+    # determine how many items are in list and NDIGIT
+    items = get_cont_record(file_obj)
+    ndigit = items[2]
+    npar = items[3]    # Number of parameters
+    nlines = items[4]  # Lines to read
+    NROW_RULES = {2: 18, 3: 12, 4: 11, 5: 9, 6: 8}
+    nrow = NROW_RULES[ndigit]
+
+    # read lines and build correlation matrix
+    corr = np.identity(npar)
+    for i in range(nlines):
+        line = file_obj.readline()
+        ii = int_endf(line[:5]) - 1  # -1 to account for 0 indexing
+        jj = int_endf(line[5:10]) - 1
+        factor = 10**ndigit
+        for j in range(nrow):
+            if jj+j >= ii:
+                break
+            element = int_endf(line[11+(ndigit+1)*j:11+(ndigit+1)*(j+1)])
+            if element > 0:
+                corr[ii, jj] = (element+0.5)/factor
+            elif element < 0:
+                corr[ii, jj] = (element-0.5)/factor
+
+    # Symmetrize the correlation matrix
+    corr = corr + corr.T - np.diag(corr.diagonal())
+    return corr
+
+
 def get_evaluations(filename):
     """Return a list of all evaluations within an ENDF file.
 
@@ -265,7 +359,7 @@ def get_evaluations(filename):
 
     """
     evaluations = []
-    with open(filename, 'r') as fh:
+    with open(str(filename), 'r') as fh:
         while True:
             pos = fh.tell()
             line = fh.readline()
@@ -288,7 +382,7 @@ class Evaluation(object):
     Attributes
     ----------
     info : dict
-        Miscallaneous information about the evaluation.
+        Miscellaneous information about the evaluation.
     target : dict
         Information about the target material, such as its mass, isomeric state,
         whether it's stable, and whether it's fissionable.
@@ -301,8 +395,8 @@ class Evaluation(object):
 
     """
     def __init__(self, filename_or_obj):
-        if isinstance(filename_or_obj, string_types):
-            fh = open(filename_or_obj, 'r')
+        if isinstance(filename_or_obj, (str, PurePath)):
+            fh = open(str(filename_or_obj), 'r')
         else:
             fh = filename_or_obj
         self.section = {}
@@ -311,8 +405,14 @@ class Evaluation(object):
         self.projectile = {}
         self.reaction_list = []
 
-        # Determine MAT number for this evaluation
+        # Skip TPID record. Evaluators sometimes put in TPID records that are
+        # ill-formated because they lack MF/MT values or put them in the wrong
+        # columns.
+        if fh.tell() == 0:
+            fh.readline()
         MF = 0
+
+        # Determine MAT number for this evaluation
         while MF == 0:
             position = fh.tell()
             line = fh.readline()
@@ -348,6 +448,14 @@ class Evaluation(object):
 
         self._read_header()
 
+    def __repr__(self):
+        if 'zsymam' in self.target:
+            name = self.target['zsymam'].replace(' ', '')
+        else:
+            name = 'Unknown'
+        return '<{} for {} {}>'.format(self.info['sublibrary'], name,
+                                       self.info['library'])
+
     def _read_header(self):
         file_obj = io.StringIO(self.section[1, 451])
 
@@ -360,8 +468,7 @@ class Evaluation(object):
         self._LRP = items[2]
         self.target['fissionable'] = (items[3] == 1)
         try:
-            global LIBRARIES
-            library = LIBRARIES[items[4]]
+            library = _LIBRARY[items[4]]
         except KeyError:
             library = 'Unknown'
         self.info['modification'] = items[5]
@@ -384,7 +491,7 @@ class Evaluation(object):
         self.projectile['mass'] = items[0]
         self.info['energy_max'] = items[1]
         library_release = items[2]
-        self.info['sublibrary'] = items[4]
+        self.info['sublibrary'] = _SUBLIBRARY[items[4]]
         library_version = items[5]
         self.info['library'] = (library, library_version, library_release)
 
@@ -411,27 +518,14 @@ class Evaluation(object):
 
         # File numbers, reaction designations, and number of records
         for i in range(NXC):
-            line = file_obj.readline()
-            mf = int(line[22:33])
-            mt = int(line[33:44])
-            nc = int(line[44:55])
-            try:
-                mod = int(line[55:66])
-            except ValueError:
-                # In JEFF 3.2, a few isotopes of U have MOD values that are
-                # missing. This prevents failure on these isotopes.
-                mod = 0
+            _, _, mf, mt, nc, mod = get_cont_record(file_obj, skip_c=True)
             self.reaction_list.append((mf, mt, nc, mod))
 
     @property
     def gnd_name(self):
-        symbol = ATOMIC_SYMBOL[self.target['atomic_number']]
-        A = self.target['mass_number']
-        m = self.target['isomeric_state']
-        if m > 0:
-            return '{}{}_m{}'.format(symbol, A, m)
-        else:
-            return '{}{}'.format(symbol, A)
+        return gnd_name(self.target['atomic_number'],
+                        self.target['mass_number'],
+                        self.target['isomeric_state'])
 
 
 class Tabulated2D(object):

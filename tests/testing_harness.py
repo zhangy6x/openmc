@@ -1,5 +1,3 @@
-from __future__ import print_function
-
 from difflib import unified_diff
 import filecmp
 import glob
@@ -10,10 +8,10 @@ import shutil
 import sys
 
 import numpy as np
-
-sys.path.insert(0, os.path.join(os.pardir, os.pardir))
 import openmc
 from openmc.examples import pwr_core
+
+from tests.regression_tests import config
 
 
 class TestHarness(object):
@@ -21,19 +19,10 @@ class TestHarness(object):
 
     def __init__(self, statepoint_name):
         self._sp_name = statepoint_name
-        self.parser = OptionParser()
-        self.parser.add_option('--exe', dest='exe', default='openmc')
-        self.parser.add_option('--mpi_exec', dest='mpi_exec', default=None)
-        self.parser.add_option('--mpi_np', dest='mpi_np', default='2')
-        self.parser.add_option('--update', dest='update', action='store_true',
-                               default=False)
-        self._opts = None
-        self._args = None
 
     def main(self):
         """Accept commandline arguments and either run or update tests."""
-        (self._opts, self._args) = self.parser.parse_args()
-        if self._opts.update:
+        if config['update']:
             self.update_results()
         else:
             self.execute_test()
@@ -61,15 +50,11 @@ class TestHarness(object):
             self._cleanup()
 
     def _run_openmc(self):
-        if self._opts.mpi_exec is not None:
-            returncode = openmc.run(
-                openmc_exec=self._opts.exe,
-                mpi_args=[self._opts.mpi_exec, '-n', self._opts.mpi_np])
-
+        if config['mpi']:
+            mpi_args = [config['mpiexec'], '-n', config['mpi_np']]
+            openmc.run(openmc_exec=config['exe'], mpi_args=mpi_args)
         else:
-            returncode = openmc.run(openmc_exec=self._opts.exe)
-
-        assert returncode == 0, 'OpenMC did not exit successfully.'
+            openmc.run(openmc_exec=config['exe'])
 
     def _test_output_created(self):
         """Make sure statepoint.* and tallies.out have been created."""
@@ -90,7 +75,7 @@ class TestHarness(object):
             # Write out k-combined.
             outstr = 'k-combined:\n'
             form = '{0:12.6E} {1:12.6E}\n'
-            outstr += form.format(sp.k_combined[0], sp.k_combined[1])
+            outstr += form.format(sp.k_combined.n, sp.k_combined.s)
 
             # Write out tally data.
             for i, tally_ind in enumerate(sp.tallies):
@@ -142,41 +127,73 @@ class HashedTestHarness(TestHarness):
 
     def _get_results(self):
         """Digest info in the statepoint and return as a string."""
-        return super(HashedTestHarness, self)._get_results(True)
+        return super()._get_results(True)
 
 
 class CMFDTestHarness(TestHarness):
     """Specialized TestHarness for running OpenMC CMFD tests."""
 
-    def _get_results(self):
-        """Digest info in the statepoint and return as a string."""
+    def __init__(self, statepoint_name, cmfd_run):
+        super().__init__(statepoint_name)
+        self._create_cmfd_result_str(cmfd_run)
 
-        # Write out the eigenvalue and tallies.
-        outstr = super(CMFDTestHarness, self)._get_results()
+    def _create_cmfd_result_str(self, cmfd_run):
+        """Create CMFD result string from variables of CMFDRun instance"""
+        outstr = 'cmfd indices\n'
+        outstr += '\n'.join(['{:.6E}'.format(x) for x in cmfd_run.indices])
+        outstr += '\nk cmfd\n'
+        outstr += '\n'.join(['{:.6E}'.format(x) for x in cmfd_run.k_cmfd])
+        outstr += '\ncmfd entropy\n'
+        outstr += '\n'.join(['{:.6E}'.format(x) for x in cmfd_run.entropy])
+        outstr += '\ncmfd balance\n'
+        outstr += '\n'.join(['{:.5E}'.format(x) for x in cmfd_run.balance])
+        outstr += '\ncmfd dominance ratio\n'
+        outstr += '\n'.join(['{:.3E}'.format(x) for x in cmfd_run.dom])
+        outstr += '\ncmfd openmc source comparison\n'
+        outstr += '\n'.join(['{:.6E}'.format(x) for x in cmfd_run.src_cmp])
+        outstr += '\ncmfd source\n'
+        cmfdsrc = np.reshape(cmfd_run.cmfd_src, np.product(cmfd_run.indices),
+                             order='F')
+        outstr += '\n'.join(['{:.6E}'.format(x) for x in cmfdsrc])
+        outstr += '\n'
+        self._cmfdrun_results = outstr
 
-        # Read the statepoint file.
-        statepoint = glob.glob(self._sp_name)[0]
-        with openmc.StatePoint(statepoint) as sp:
-            # Write out CMFD data.
-            outstr += 'cmfd indices\n'
-            outstr += '\n'.join(['{0:12.6E}'.format(x) for x in sp.cmfd_indices])
-            outstr += '\nk cmfd\n'
-            outstr += '\n'.join(['{0:12.6E}'.format(x) for x in sp.k_cmfd])
-            outstr += '\ncmfd entropy\n'
-            outstr += '\n'.join(['{0:12.6E}'.format(x) for x in sp.cmfd_entropy])
-            outstr += '\ncmfd balance\n'
-            outstr += '\n'.join(['{0:12.6E}'.format(x) for x in sp.cmfd_balance])
-            outstr += '\ncmfd dominance ratio\n'
-            outstr += '\n'.join(['{0:10.3E}'.format(x) for x in sp.cmfd_dominance])
-            outstr += '\ncmfd openmc source comparison\n'
-            outstr += '\n'.join(['{0:12.6E}'.format(x) for x in sp.cmfd_srccmp])
-            outstr += '\ncmfd source\n'
-            cmfdsrc = np.reshape(sp.cmfd_src, np.product(sp.cmfd_indices),
-                                 order='F')
-            outstr += '\n'.join(['{0:12.6E}'.format(x) for x in cmfdsrc])
-            outstr += '\n'
+    def execute_test(self):
+        """Don't call _run_openmc as OpenMC will be called through C API for
+        CMFD tests, and write CMFD results that were passsed as argument
 
-        return outstr
+        """
+        try:
+            self._test_output_created()
+            results = self._get_results()
+            results += self._cmfdrun_results
+            self._write_results(results)
+            self._compare_results()
+        finally:
+            self._cleanup()
+
+    def update_results(self):
+        """Don't call _run_openmc as OpenMC will be called through C API for
+        CMFD tests, and write CMFD results that were passsed as argument
+
+        """
+        try:
+            self._test_output_created()
+            results = self._get_results()
+            results += self._cmfdrun_results
+            self._write_results(results)
+            self._overwrite_results()
+        finally:
+            self._cleanup()
+
+    def _cleanup(self):
+        """Delete output files for numpy matrices and flux vectors."""
+        super()._cleanup()
+        output = ['loss.npz', 'loss.dat', 'prod.npz', 'prod.dat',
+                  'fluxvec.npy', 'fluxvec.dat']
+        for f in output:
+            if os.path.exists(f):
+                os.remove(f)
 
 
 class ParticleRestartTestHarness(TestHarness):
@@ -184,18 +201,16 @@ class ParticleRestartTestHarness(TestHarness):
 
     def _run_openmc(self):
         # Set arguments
-        args = {'openmc_exec': self._opts.exe}
-        if self._opts.mpi_exec is not None:
-            args['mpi_args'] = [self._opts.mpi_exec, '-n', self._opts.mpi_np]
+        args = {'openmc_exec': config['exe']}
+        if config['mpi']:
+            args['mpi_args'] = [config['mpiexec'], '-n', config['mpi_np']]
 
         # Initial run
-        returncode = openmc.run(**args)
-        assert returncode == 0, 'OpenMC did not exit successfully.'
+        openmc.run(**args)
 
         # Run particle restart
         args.update({'restart_file': self._sp_name})
-        returncode = openmc.run(**args)
-        assert returncode == 0, 'OpenMC did not exit successfully.'
+        openmc.run(**args)
 
     def _test_output_created(self):
         """Make sure the restart file has been created."""
@@ -237,9 +252,7 @@ class ParticleRestartTestHarness(TestHarness):
 
 class PyAPITestHarness(TestHarness):
     def __init__(self, statepoint_name, model=None):
-        super(PyAPITestHarness, self).__init__(statepoint_name)
-        self.parser.add_option('-b', '--build-inputs', dest='build_only',
-                               action='store_true', default=False)
+        super().__init__(statepoint_name)
         if model is None:
             self._model = pwr_core()
         else:
@@ -249,10 +262,9 @@ class PyAPITestHarness(TestHarness):
 
     def main(self):
         """Accept commandline arguments and either run or update tests."""
-        (self._opts, self._args) = self.parser.parse_args()
-        if self._opts.build_only:
+        if config['build_inputs']:
             self._build_inputs()
-        elif self._opts.update:
+        elif config['update']:
             self.update_results()
         else:
             self.execute_test()
@@ -320,7 +332,7 @@ class PyAPITestHarness(TestHarness):
 
     def _cleanup(self):
         """Delete XMLs, statepoints, tally, and test files."""
-        super(PyAPITestHarness, self)._cleanup()
+        super()._cleanup()
         output = ['materials.xml', 'geometry.xml', 'settings.xml',
                   'tallies.xml', 'plots.xml', 'inputs_test.dat']
         for f in output:
@@ -331,4 +343,4 @@ class PyAPITestHarness(TestHarness):
 class HashedPyAPITestHarness(PyAPITestHarness):
     def _get_results(self):
         """Digest info in the statepoint and return as a string."""
-        return super(HashedPyAPITestHarness, self)._get_results(True)
+        return super()._get_results(True)

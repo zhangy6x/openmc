@@ -1,15 +1,16 @@
-from collections import Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from numbers import Real, Integral
-from xml.etree import ElementTree as ET
+from pathlib import Path
+import subprocess
 import sys
 import warnings
+from xml.etree import ElementTree as ET
 
-from six import string_types
 import numpy as np
 
 import openmc
 import openmc.checkvalue as cv
-from openmc.clean_xml import clean_xml_indentation
+from openmc._xml import clean_indentation
 from openmc.mixin import IDManagerMixin
 
 
@@ -207,14 +208,18 @@ class Plot(IDManagerMixin):
         The cells or materials to plot
     mask_background : Iterable of int or str
         Color to apply to all cells/materials not listed in mask_components
+    show_overlaps : bool
+        Inidicate whether or not overlapping regions are shown
+    overlap_color : Iterable of int or str
+        Color to apply to overlapping regions
     colors : dict
         Dictionary indicating that certain cells/materials (keys) should be
         displayed with a particular color.
     level : int
         Universe depth to plot at
     meshlines : dict
-        Dictionary defining type, id, linewidth and color of a regular mesh
-        to be plotted on top of a plot
+        Dictionary defining type, id, linewidth and color of a mesh to be
+        plotted on top of a plot
 
     """
 
@@ -235,6 +240,8 @@ class Plot(IDManagerMixin):
         self._background = None
         self._mask_components = None
         self._mask_background = None
+        self._show_overlaps = False
+        self._overlap_color = None
         self._colors = {}
         self._level = None
         self._meshlines = None
@@ -284,6 +291,14 @@ class Plot(IDManagerMixin):
         return self._mask_background
 
     @property
+    def show_overlaps(self):
+        return self._show_overlaps
+
+    @property
+    def overlap_color(self):
+        return self._overlap_color
+
+    @property
     def colors(self):
         return self._colors
 
@@ -297,7 +312,7 @@ class Plot(IDManagerMixin):
 
     @name.setter
     def name(self, name):
-        cv.check_type('plot name', name, string_types)
+        cv.check_type('plot name', name, str)
         self._name = name
 
     @width.setter
@@ -322,7 +337,7 @@ class Plot(IDManagerMixin):
 
     @filename.setter
     def filename(self, filename):
-        cv.check_type('filename', filename, string_types)
+        cv.check_type('filename', filename, str)
         self._filename = filename
 
     @color_by.setter
@@ -342,15 +357,7 @@ class Plot(IDManagerMixin):
 
     @background.setter
     def background(self, background):
-        cv.check_type('plot background', background, Iterable)
-        if isinstance(background, string_types):
-            if background.lower() not in _SVG_COLORS:
-                raise ValueError("'{}' is not a valid color.".format(background))
-        else:
-            cv.check_length('plot background', background, 3)
-            for rgb in background:
-                cv.check_greater_than('plot background', rgb, 0, True)
-                cv.check_less_than('plot background', rgb, 256)
+        self._check_color('plot background', background)
         self._background = background
 
     @colors.setter
@@ -358,17 +365,7 @@ class Plot(IDManagerMixin):
         cv.check_type('plot colors', colors, Mapping)
         for key, value in colors.items():
             cv.check_type('plot color key', key, (openmc.Cell, openmc.Material))
-            cv.check_type('plot color value', value, Iterable)
-            if isinstance(value, string_types):
-                if value.lower() not in _SVG_COLORS:
-                    raise ValueError("'{}' is not a valid color.".format(value))
-            else:
-                cv.check_length('plot color (RGB)', value, 3)
-                for component in value:
-                    cv.check_type('RGB component', component, Real)
-                    cv.check_greater_than('RGB component', component, 0, True)
-                    cv.check_less_than('RGB component', component, 255, True)
-
+            self._check_color('plot color value', value)
         self._colors = colors
 
     @mask_components.setter
@@ -379,16 +376,19 @@ class Plot(IDManagerMixin):
 
     @mask_background.setter
     def mask_background(self, mask_background):
-        cv.check_type('plot mask background', mask_background, Iterable)
-        if isinstance(mask_background, string_types):
-            if mask_background.lower() not in _SVG_COLORS:
-                raise ValueError("'{}' is not a valid color.".format(mask_background))
-        else:
-            cv.check_length('plot mask_background', mask_background, 3)
-            for rgb in mask_background:
-                cv.check_greater_than('plot mask background', rgb, 0, True)
-                cv.check_less_than('plot mask background', rgb, 256)
+        self._check_color('plot mask background', mask_background)
         self._mask_background = mask_background
+
+    @show_overlaps.setter
+    def show_overlaps(self, show_overlaps):
+        cv.check_type('Show overlaps flag for Plot ID="{}"'.format(self.id),
+                      show_overlaps, bool)
+        self._show_overlaps = show_overlaps
+
+    @overlap_color.setter
+    def overlap_color(self, overlap_color):
+        self._check_color('plot overlap color', overlap_color)
+        self._overlap_color = overlap_color
 
     @level.setter
     def level(self, plot_level):
@@ -420,14 +420,22 @@ class Plot(IDManagerMixin):
                                   0, equality=True)
 
         if 'color' in meshlines:
-            cv.check_type('plot meshlines color', meshlines['color'], Iterable,
-                          Integral)
-            cv.check_length('plot meshlines color', meshlines['color'], 3)
-            for rgb in meshlines['color']:
-                cv.check_greater_than('plot meshlines color', rgb, 0, True)
-                cv.check_less_than('plot meshlines color', rgb, 256)
+            self._check_color('plot meshlines color', meshlines['color'])
 
         self._meshlines = meshlines
+
+    @staticmethod
+    def _check_color(err_string, color):
+        cv.check_type(err_string, color, Iterable)
+        if isinstance(color, str):
+            if color.lower() not in _SVG_COLORS:
+                raise ValueError("'{}' is not a valid color.".format(color))
+        else:
+            cv.check_length(err_string, color, 3)
+            for rgb in color:
+                cv.check_type(err_string, rgb, Real)
+                cv.check_greater_than('RGB component', rgb, 0, True)
+                cv.check_less_than('RGB component', rgb, 256)
 
     def __repr__(self):
         string = 'Plot\n'
@@ -438,13 +446,15 @@ class Plot(IDManagerMixin):
         string += '{: <16}=\t{}\n'.format('\tBasis', self._basis)
         string += '{: <16}=\t{}\n'.format('\tWidth', self._width)
         string += '{: <16}=\t{}\n'.format('\tOrigin', self._origin)
-        string += '{: <16}=\t{}\n'.format('\tPixels', self._origin)
-        string += '{: <16}=\t{}\n'.format('\tColor by', self._color)
+        string += '{: <16}=\t{}\n'.format('\tPixels', self._pixels)
+        string += '{: <16}=\t{}\n'.format('\tColor by', self._color_by)
         string += '{: <16}=\t{}\n'.format('\tBackground', self._background)
         string += '{: <16}=\t{}\n'.format('\tMask components',
                                             self._mask_components)
         string += '{: <16}=\t{}\n'.format('\tMask background',
                                             self._mask_background)
+        string += '{: <16}=\t{}\n'.format('\Overlap Color',
+                                            self._overlap_color)
         string += '{: <16}=\t{}\n'.format('\tColors', self._colors)
         string += '{: <16}=\t{}\n'.format('\tLevel', self._level)
         string += '{: <16}=\t{}\n'.format('\tMeshlines', self._meshlines)
@@ -558,7 +568,7 @@ class Plot(IDManagerMixin):
         cv.check_type('background', background, Iterable)
 
         # Get a background (R,G,B) tuple to apply in alpha compositing
-        if isinstance(background, string_types):
+        if isinstance(background, str):
             if background.lower() not in _SVG_COLORS:
                 raise ValueError("'{}' is not a valid color.".format(background))
             background = _SVG_COLORS[background.lower()]
@@ -570,7 +580,7 @@ class Plot(IDManagerMixin):
         # other than those the user wishes to highlight
         for domain, color in self.colors.items():
             if domain not in domains:
-                if isinstance(color, string_types):
+                if isinstance(color, str):
                     color = _SVG_COLORS[color.lower()]
                 r, g, b = color
                 r = int(((1-alpha) * background[0]) + (alpha * r))
@@ -610,7 +620,7 @@ class Plot(IDManagerMixin):
         if self._background is not None:
             subelement = ET.SubElement(element, "background")
             color = self._background
-            if isinstance(color, string_types):
+            if isinstance(color, str):
                 color = _SVG_COLORS[color.lower()]
             subelement.text = ' '.join(str(x) for x in color)
 
@@ -619,7 +629,7 @@ class Plot(IDManagerMixin):
                                         key=lambda x: x[0].id):
                 subelement = ET.SubElement(element, "color")
                 subelement.set("id", str(domain.id))
-                if isinstance(color, string_types):
+                if isinstance(color, str):
                     color = _SVG_COLORS[color.lower()]
                 subelement.set("rgb", ' '.join(str(x) for x in color))
 
@@ -629,10 +639,22 @@ class Plot(IDManagerMixin):
                 str(d.id) for d in self._mask_components))
             color = self._mask_background
             if color is not None:
-                if isinstance(color, string_types):
+                if isinstance(color, str):
                     color = _SVG_COLORS[color.lower()]
                 subelement.set("background", ' '.join(
                     str(x) for x in color))
+
+        if self._show_overlaps:
+            subelement = ET.SubElement(element, "show_overlaps")
+            subelement.text = "true"
+
+            if self._overlap_color is not None:
+                color = self._overlap_color
+                if isinstance(color, str):
+                    color = _SVG_COLORS[color.lower()]
+                subelement = ET.SubElement(element, "overlap_color")
+                subelement.text = ' '.join(str(x) for x in color)
+
 
         if self._level is not None:
             subelement = ET.SubElement(element, "level")
@@ -650,6 +672,49 @@ class Plot(IDManagerMixin):
                     str, self._meshlines['color'])))
 
         return element
+
+    def to_ipython_image(self, openmc_exec='openmc', cwd='.',
+                         convert_exec='convert'):
+        """Render plot as an image
+
+        This method runs OpenMC in plotting mode to produce a bitmap image which
+        is then converted to a .png file and loaded in as an
+        :class:`IPython.display.Image` object. As such, it requires that your
+        model geometry, materials, and settings have already been exported to
+        XML.
+
+        Parameters
+        ----------
+        openmc_exec : str
+            Path to OpenMC executable
+        cwd : str, optional
+            Path to working directory to run in
+        convert_exec : str, optional
+            Command that can convert PPM files into PNG files
+
+        Returns
+        -------
+        IPython.display.Image
+            Image generated
+
+        """
+        from IPython.display import Image
+
+        # Create plots.xml
+        Plots([self]).export_to_xml()
+
+        # Run OpenMC in geometry plotting mode
+        openmc.plot_geometry(False, openmc_exec, cwd)
+
+        # Convert to .png
+        if self.filename is not None:
+            ppm_file = '{}.ppm'.format(self.filename)
+        else:
+            ppm_file = 'plot_{}.ppm'.format(self.id)
+        png_file = ppm_file.replace('.ppm', '.png')
+        subprocess.check_call([convert_exec, ppm_file, png_file])
+
+        return Image(png_file)
 
 
 class Plots(cv.CheckedList):
@@ -674,27 +739,10 @@ class Plots(cv.CheckedList):
     """
 
     def __init__(self, plots=None):
-        super(Plots, self).__init__(Plot, 'plots collection')
+        super().__init__(Plot, 'plots collection')
         self._plots_file = ET.Element("plots")
         if plots is not None:
             self += plots
-
-    def add_plot(self, plot):
-        """Add a plot to the file.
-
-        .. deprecated:: 0.8
-            Use :meth:`Plots.append` instead.
-
-        Parameters
-        ----------
-        plot : openmc.Plot
-            Plot to add
-
-        """
-        warnings.warn("Plots.add_plot(...) has been deprecated and may be "
-                      "removed in a future version. Use Plots.append(...) "
-                      "instead.", DeprecationWarning)
-        self.append(plot)
 
     def append(self, plot):
         """Append plot to collection
@@ -705,7 +753,7 @@ class Plots(cv.CheckedList):
             Plot to append
 
         """
-        super(Plots, self).append(plot)
+        super().append(plot)
 
     def insert(self, index, plot):
         """Insert plot before index
@@ -718,24 +766,7 @@ class Plots(cv.CheckedList):
             Plot to insert
 
         """
-        super(Plots, self).insert(index, plot)
-
-    def remove_plot(self, plot):
-        """Remove a plot from the file.
-
-        .. deprecated:: 0.8
-            Use :meth:`Plots.remove` instead.
-
-        Parameters
-        ----------
-        plot : openmc.Plot
-            Plot to remove
-
-        """
-        warnings.warn("Plots.remove_plot(...) has been deprecated and may be "
-                      "removed in a future version. Use Plots.remove(...) "
-                      "instead.", DeprecationWarning)
-        self.remove(plot)
+        super().insert(index, plot)
 
     def colorize(self, geometry, seed=1):
         """Generate a consistent color scheme for each domain in each plot.
@@ -807,8 +838,13 @@ class Plots(cv.CheckedList):
         self._create_plot_subelements()
 
         # Clean the indentation in the file to be user-readable
-        clean_xml_indentation(self._plots_file)
+        clean_indentation(self._plots_file)
+
+        # Check if path is a directory
+        p = Path(path)
+        if p.is_dir():
+            p /= 'plots.xml'
 
         # Write the XML Tree to the plots.xml file
         tree = ET.ElementTree(self._plots_file)
-        tree.write(path, xml_declaration=True, encoding='utf-8', method="xml")
+        tree.write(str(p), xml_declaration=True, encoding='utf-8')

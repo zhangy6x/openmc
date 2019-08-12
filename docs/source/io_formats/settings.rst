@@ -32,6 +32,19 @@ standard deviation.
 
   *Default*: false
 
+-------------------------------------
+``<create_fission_neutrons>`` Element
+-------------------------------------
+
+The ``<create_fission_neutrons>`` element indicates whether fission neutrons
+should be created or not.  If this element is set to "true", fission neutrons
+will be created; otherwise the fission is treated as capture and no fission
+neutron will be created. Note that this option is only applied to fixed source
+calculation. For eigenvalue calculation, fission will always be treated as real
+fission.
+
+  *Default*: true
+
 --------------------
 ``<cutoff>`` Element
 --------------------
@@ -55,31 +68,43 @@ you care. This element has the following attributes/sub-elements:
 
     *Default*: 1.0
 
-  :energy:
-    The energy under which particles will be killed.
+  :energy_neutron:
+    The energy under which neutrons will be killed.
 
     *Default*: 0.0
 
--------------------------
-``<energy_grid>`` Element
--------------------------
+  :energy_photon:
+    The energy under which photons will be killed.
 
-The ``<energy_grid>`` element determines the treatment of the energy grid during
-a simulation. The valid options are "nuclide", "logarithm", and
-"material-union". Setting this element to "nuclide" will cause OpenMC to use a
-nuclide's energy grid when determining what points to interpolate between for
-determining cross sections (i.e. non-unionized energy grid). Setting this
-element to "logarithm" causes OpenMC to use a logarithmic mapping technique
-described in LA-UR-14-24530_. Setting this element to "material-union" will
-cause OpenMC to create energy grids that are unionized material-by-material and
-use these grids when determining the energy-cross section pairs to interpolate
-cross section values between.
+    *Default*: 1000.0
 
-  *Default*: logarithm
+  :energy_electron:
+    The energy under which electrons will be killed.
 
-  .. note:: This element is not used in the multi-group :ref:`energy_mode`.
+    *Default*: 0.0
 
-.. _LA-UR-14-24530: https://laws.lanl.gov/vhosts/mcnp.lanl.gov/pdf_files/la-ur-14-24530.pdf
+  :energy_positron:
+    The energy under which positrons will be killed.
+
+    *Default*: 0.0
+
+--------------------------------
+``<dagmc>`` Element
+--------------------------------
+
+When the DAGMC mode is enabled, the OpenMC geometry will be read from the file
+``dagmc.h5m``. If a :ref:`geometry.xml <io_geometry>` file is present with
+``dagmc`` set to ``true``, it will be ignored.
+
+--------------------------------
+``<electron_treatment>`` Element
+--------------------------------
+
+When photon transport is enabled, the ``<electron_treatment>`` element tells
+OpenMC whether to deposit all energy from electrons locally (``led``) or create
+secondary bremsstrahlung photons (``ttb``).
+
+  *Default*: ttb
 
 .. _energy_mode:
 
@@ -93,29 +118,13 @@ or ``multi-group``.
 
   *Default*: continuous-energy
 
----------------------
-``<entropy>`` Element
----------------------
+--------------------------
+``<entropy_mesh>`` Element
+--------------------------
 
-The ``<entropy>`` element describes a mesh that is used for calculating Shannon
-entropy. This mesh should cover all possible fissionable materials in the
-problem. It has the following attributes/sub-elements:
-
-  :dimension:
-    The number of mesh cells in the x, y, and z directions, respectively.
-
-    *Default*: If this tag is not present, the number of mesh cells is
-     automatically determined by the code.
-
-  :lower_left:
-    The Cartesian coordinates of the lower-left corner of the mesh.
-
-    *Default*: None
-
-  :upper_right:
-    The Cartesian coordinates of the upper-right corner of the mesh.
-
-    *Default*: None
+The ``<entropy_mesh>`` element indicates the ID of a mesh that is to be used for
+calculating Shannon entropy. The mesh should cover all possible fissionable
+materials in the problem and is specified using a :ref:`mesh_element`.
 
 -----------------------------------
 ``<generations_per_batch>`` Element
@@ -169,8 +178,7 @@ the estimated eigenvalue. It has the following attributes/sub-elements:
 
     *Default*: None
 
-.. note:: See section on the :ref:`trigger` for more information.
-
+  .. note:: See section on the :ref:`trigger` for more information.
 
 ---------------------------
 ``<log_grid_bins>`` Element
@@ -185,6 +193,8 @@ based on the recommended value in LA-UR-14-24530_.
 
   .. note:: This element is not used in the multi-group :ref:`energy_mode`.
 
+.. _LA-UR-14-24530: https://laws.lanl.gov/vhosts/mcnp.lanl.gov/pdf_files/la-ur-14-24530.pdf
+
 ---------------------------
 ``<max_order>`` Element
 ---------------------------
@@ -198,6 +208,36 @@ then, OpenMC will only use up to the :math:`P_1` data.
 
   .. note:: This element is not used in the continuous-energy
     :ref:`energy_mode`.
+
+.. _mesh_element:
+
+------------------
+``<mesh>`` Element
+------------------
+
+The ``<mesh>`` element describes a mesh that is used either for calculating
+Shannon entropy, applying the uniform fission site method, or in tallies. For
+Shannon entropy meshes, the mesh should cover all possible fissionable materials
+in the problem. It has the following attributes/sub-elements:
+
+  :id:
+    A unique integer that is used to identify the mesh.
+
+  :dimension:
+    The number of mesh cells in the x, y, and z directions, respectively.
+
+    *Default*: If this tag is not present, the number of mesh cells is
+    automatically determined by the code.
+
+  :lower_left:
+    The Cartesian coordinates of the lower-left corner of the mesh.
+
+    *Default*: None
+
+  :upper_right:
+    The Cartesian coordinates of the upper-right corner of the mesh.
+
+    *Default*: None
 
 -----------------------
 ``<no_reduce>`` Element
@@ -245,10 +285,20 @@ out the file and "false" will not.
 -----------------------
 
 This element indicates the number of neutrons to simulate per fission source
-iteration when a k-eigenvalue calculation is performed or the number of neutrons
-per batch for a fixed source simulation.
+iteration when a k-eigenvalue calculation is performed or the number of
+particles per batch for a fixed source simulation.
 
   *Default*: None
+
+------------------------------
+``<photon_transport>`` Element
+------------------------------
+
+The ``<photon_transport>`` element determines whether photon transport is
+enabled. This element has no attributes or sub-elements and can be set to
+either "false" or "true".
+
+  *Default*: false
 
 ---------------------
 ``<ptables>`` Element
@@ -279,14 +329,13 @@ or sub-elements:
 
   :method:
 
-    Which resonance elastic scattering method is to be applied: "ares"
-    (accelerated resonance elastic scattering), "dbrc" (Doppler broadening
-    rejection correction), or "wcm" (weight correction method). Descriptions of
-    each of these methods are documented here_.
+    Which resonance elastic scattering method is to be applied: "rvs" (relative
+    velocity sampling) or "dbrc" (Doppler broadening rejection correction).
+    Descriptions of each of these methods are documented here_.
 
-    .. _here: http://dx.doi.org/10.1016/j.anucene.2014.01.017
+    .. _here: http://dx.doi.org/10.1016/j.anucene.2017.12.044
 
-    *Default*: "ares"
+    *Default*: "rvs"
 
   :energy_min:
     The energy in eV above which the resonance elastic scattering method should
@@ -318,16 +367,6 @@ or sub-elements:
             (asymptotic) kernel is used above ``energy_max``.
 
   .. note:: This element is not used in the multi-group :ref:`energy_mode`.
-
-----------------------
-``<run_cmfd>`` Element
-----------------------
-
-The ``<run_cmfd>`` element indicates whether or not CMFD acceleration should be
-turned on or off. This element has no attributes or sub-elements and can be set
-to either "false" or "true".
-
-  *Default*: false
 
 ----------------------
 ``<run_mode>`` Element
@@ -364,6 +403,11 @@ attributes/sub-elements:
     other.
 
     *Default*: 1.0
+
+  :particle:
+    The source particle type, either ``neutron`` or ``photon``.
+
+    *Default*: neutron
 
   :file:
     If this attribute is given, it indicates that the source is to be read from
@@ -686,15 +730,6 @@ sections.
 
   *Default*: 10 K
 
----------------------
-``<threads>`` Element
----------------------
-
-The ``<threads>`` element indicates the number of OpenMP threads to be used for
-a simulation. It has no attributes and accepts a positive integer value.
-
-  *Default*: None (Determined by environment variable :envvar:`OMP_NUM_THREADS`)
-
 .. _trace:
 
 -------------------
@@ -765,30 +800,15 @@ has the following attributes/sub-elements:
 
 
 ------------------------
-``<uniform_fs>`` Element
+``<ufs_mesh>`` Element
 ------------------------
 
-The ``<uniform_fs>`` element describes a mesh that is used for re-weighting
-source sites at every generation based on the uniform fission site methodology
-described in Kelly et al., "MC21 Analysis of the Nuclear Energy Agency Monte
-Carlo Performance Benchmark Problem," Proceedings of *Physor 2012*, Knoxville,
-TN (2012). This mesh should cover all possible fissionable materials in the
-problem. It has the following attributes/sub-elements:
-
-  :dimension:
-    The number of mesh cells in the x, y, and z directions, respectively.
-
-    *Default*: None
-
-  :lower_left:
-    The Cartesian coordinates of the lower-left corner of the mesh.
-
-    *Default*: None
-
-  :upper_right:
-    The Cartesian coordinates of the upper-right corner of the mesh.
-
-    *Default*: None
+The ``<ufs_mesh>`` element indicates the ID of a mesh that is used for
+re-weighting source sites at every generation based on the uniform fission site
+methodology described in Kelly et al., "MC21 Analysis of the Nuclear Energy
+Agency Monte Carlo Performance Benchmark Problem," Proceedings of *Physor 2012*,
+Knoxville, TN (2012). The mesh should cover all possible fissionable materials
+in the problem and is specified using a :ref:`mesh_element`.
 
 .. _verbosity:
 
@@ -812,20 +832,6 @@ and 10. The verbosity levels are defined as follows:
   :10: all of the above + event information
 
   *Default*: 7
-
--------------------------------------
-``<create_fission_neutrons>`` Element
--------------------------------------
-
-The ``<create_fission_neutrons>`` element indicates whether fission neutrons
-should be created or not.  If this element is set to "true", fission neutrons
-will be created; otherwise the fission is treated as capture and no fission
-neutron will be created. Note that this option is only applied to fixed source
-calculation. For eigenvalue calculation, fission will always be treated as real
-fission.
-
-  *Default*: true
-
 
 -------------------------
 ``<volume_calc>`` Element

@@ -1,8 +1,8 @@
 .. _io_nuclear_data:
 
-========================
-Nuclear Data File Format
-========================
+=========================
+Nuclear Data File Formats
+=========================
 
 ---------------------
 Incident Neutron Data
@@ -10,7 +10,7 @@ Incident Neutron Data
 
 **/**
 
-:Attributes:
+:Attributes: - **filetype** (*char[]*) -- String indicating the type of file
              - **version** (*int[2]*) -- Major and minor version of the data
 
 **/<nuclide name>/**
@@ -22,7 +22,9 @@ Incident Neutron Data
              - **atomic_weight_ratio** (*double*) -- Mass in units of neutron masses
              - **n_reaction** (*int*) -- Number of reactions
 
-:Datasets: - **energy** (*double[]*) -- Energy points at which cross sections are tabulated
+:Datasets:
+           - **energy** (*double[]*) -- Energies in [eV] at which cross sections
+             are tabulated
 
 **/<nuclide name>/kTs/**
 
@@ -31,7 +33,7 @@ temperature-dependent data set.  For example, the data set corresponding to
 300 Kelvin would be located at `300K`.
 
 :Datasets:
-           - **<TTT>K** (*double*) -- kT values (in eV) for each temperature
+           - **<TTT>K** (*double*) -- kT values in [eV] for each temperature
              TTT (in Kelvin)
 
 **/<nuclide name>/reactions/reaction_<mt>/**
@@ -42,6 +44,7 @@ temperature-dependent data set.  For example, the data set corresponding to
              - **center_of_mass** (*int*) -- Whether the reference frame for
                scattering is center-of-mass (1) or laboratory (0)
              - **n_product** (*int*) -- Number of reaction products
+             - **redundant** (*int*) -- Whether reaction is redundant
 
 **/<nuclide name>/reactions/reaction_<mt>/<TTT>K/**
 
@@ -85,33 +88,120 @@ temperature-dependent data set.  For example, the data set corresponding to
 
 **/<nuclide name>/fission_energy_release/**
 
-:Datasets: - **fragments** (:ref:`polynomial <1d_polynomial>`) -- Energy
+:Datasets: - **fragments** (:ref:`function <1d_functions>`) -- Energy
              released in the form of fragments as a function of incident
              neutron energy.
-           - **prompt_neutrons** (:ref:`polynomial <1d_polynomial>` or
-             :ref:`tabulated <1d_tabulated>`) -- Energy released in the form of
-             prompt neutrons as a function of incident neutron energy.
-           - **delayed_neutrons** (:ref:`polynomial <1d_polynomial>`) -- Energy
+           - **prompt_neutrons** (:ref:`function <1d_functions>`) -- Energy
+             released in the form of prompt neutrons as a function of incident
+             neutron energy.
+           - **delayed_neutrons** (:ref:`function <1d_functions>`) -- Energy
              released in the form of delayed neutrons as a function of incident
              neutron energy.
-           - **prompt_photons** (:ref:`polynomial <1d_polynomial>`) -- Energy
+           - **prompt_photons** (:ref:`function <1d_functions>`) -- Energy
              released in the form of prompt photons as a function of incident
              neutron energy.
-           - **delayed_photons** (:ref:`polynomial <1d_polynomial>`) -- Energy
+           - **delayed_photons** (:ref:`function <1d_functions>`) -- Energy
              released in the form of delayed photons as a function of incident
              neutron energy.
-           - **betas** (:ref:`polynomial <1d_polynomial>`) -- Energy
-             released in the form of betas as a function of incident
-             neutron energy.
-           - **neutrinos** (:ref:`polynomial <1d_polynomial>`) -- Energy
-             released in the form of neutrinos as a function of incident
-             neutron energy.
-           - **q_prompt** (:ref:`polynomial <1d_polynomial>` or
-             :ref:`tabulated <1d_tabulated>`) -- The prompt fission Q-value
-             (fragments + prompt neutrons + prompt photons - incident energy)
-           - **q_recoverable** (:ref:`polynomial <1d_polynomial>` or
-             :ref:`tabulated <1d_tabulated>`) -- The recoverable fission Q-value
-             (Q_prompt + delayed neutrons + delayed photons + betas)
+           - **betas** (:ref:`function <1d_functions>`) -- Energy released in
+             the form of betas as a function of incident neutron energy.
+           - **neutrinos** (:ref:`function <1d_functions>`) -- Energy released
+             in the form of neutrinos as a function of incident neutron energy.
+           - **q_prompt** (:ref:`function <1d_functions>`) -- The prompt fission
+             Q-value (fragments + prompt neutrons + prompt photons - incident
+             energy)
+           - **q_recoverable** (:ref:`function <1d_functions>`) -- The
+             recoverable fission Q-value (Q_prompt + delayed neutrons + delayed
+             photons + betas)
+
+--------------------
+Incident Photon Data
+--------------------
+
+**/**
+
+:Attributes: - **filetype** (*char[]*) -- String indicating the type of file
+             - **version** (*int[2]*) -- Major and minor version of the data
+
+**/<element>/**
+
+:Attributes: - **Z** (*int*) -- Atomic number
+
+:Datasets:
+           - **energy** (*double[]*) -- Energies in [eV] at which cross sections
+             are tabulated
+
+**/<element>/bremsstrahlung/**
+
+:Attributes: - **I** (*double*) -- Mean excitation energy in [eV]
+
+:Datasets: - **electron_energy** (*double[]*) -- Incident electron energy in [eV]
+           - **photon_energy** (*double[]*) -- Outgoing photon energy as
+             fraction of incident electron energy
+           - **dcs** (*double[][]*) -- Bremsstrahlung differential cross section
+             at each incident energy in [mb/eV]
+           - **ionization_energy** (*double[]*) -- Ionization potential of each
+             subshell in [eV]
+           - **num_electrons** (*int[]*) -- Number of electrons per subshell,
+             with conduction electrons indicated by a negative value
+
+**/<element>/coherent/**
+
+:Datasets: - **xs** (*double[]*) -- Coherent scattering cross section in [b]
+           - **integrated_scattering_factor** (:ref:`tabulated <1d_tabulated>`)
+             -- Integrated coherent scattering form factor
+           - **anomalous_real** (:ref:`tabulated <1d_tabulated>`) -- Real part
+             of the anomalous scattering factor
+           - **anomalous_imag** (:ref:`tabulated <1d_tabulated>`) -- Imaginary
+             part of the anomalous scattering factor
+
+**/<element>/compton_profiles/**
+
+:Datasets: - **binding_energy** (*double[]*) -- Binding energy for each subshell in [eV]
+           - **num_electrons** (*double[]*) -- Number of electrons in each subshell
+           - **pz** (*double[]*) -- Projection of the electron momentum on the
+             scattering vector in units of :math:`me^2 / \hbar` where :math:`m`
+             is the electron rest mass and :math:`e` is the electron charge
+           - **J** (*double[][]*) -- Compton profile for each subshell in units
+             of :math:`\hbar / (me^2)`
+
+**/<element>/heating/**
+
+:Datasets: - **xs** (*double[]*) -- Total heating cross section in [b-eV]
+
+**/<element>/incoherent/**
+
+:Datasets: - **xs** (*double[]*) -- Incoherent scattering cross section in [b]
+           - **scattering_factor** (:ref:`tabulated <1d_tabulated>`) --
+
+**/<element>/pair_production_electron/**
+
+:Datasets: - **xs** (*double[]*) -- Pair production (electron field) cross section in [b]
+
+**/<element>/pair_production_nuclear/**
+
+:Datasets: - **xs** (*double[]*) -- Pair production (nuclear field) cross section in [b]
+
+**/<element>/photoelectric/**
+
+:Datasets: - **xs** (*double[]*) -- Total photoionization cross section in [b]
+
+**/<element>/subshells/**
+
+:Attributes: - **designators** (*char[][]*) -- Designator for each shell, e.g. 'M2'
+
+**/<element>/subshells/<designator>/**
+
+:Attributes: - **binding_energy** (*double*) -- Binding energy of the subshell in [eV]
+             - **num_electrons** (*double*) -- Number of electrons in the subshell
+
+:Datasets: - **transitions** (*double[][]*) -- Atomic relaxation data
+           - **xs** (*double[]*) -- Photoionization cross section for subshell
+             in [b] tabulated against the main energy grid
+
+             :Attributes:
+                          - **threshold_idx** (*int*) -- Index on the energy
+                            grid of the reaction threshold
 
 -------------------------------
 Thermal Neutron Scattering Data
@@ -125,11 +215,9 @@ Thermal Neutron Scattering Data
 **/<thermal name>/**
 
 :Attributes: - **atomic_weight_ratio** (*double*) -- Mass in units of neutron masses
-             - **nuclides** (*char[][]*) -- Names of nuclides for which the thermal
-               scattering data applies to
-             - **secondary_mode** (*char[]*) -- Indicates how the inelastic
-               outgoing angle-energy distributions are represented ('equal',
-               'skewed', or 'continuous').
+             - **energy_max** (*double*) -- Maximum energy in [eV]
+             - **nuclides** (*char[][]*) -- Names of nuclides for which the
+               thermal scattering data applies to
 
 **/<thermal name>/kTs/**
 
@@ -147,11 +235,13 @@ temperature-dependent data set.  For example, the data set corresponding to
 temperature-dependent data set.  For example, the data set corresponding to
 300 Kelvin would be located at `300K`.
 
-:Datasets: - **xs** (:ref:`tabulated <1d_tabulated>`) -- Thermal inelastic
+:Datasets:
+           - **xs** (:ref:`function <1d_functions>`) -- Thermal elastic
              scattering cross section for temperature TTT (in Kelvin)
-           - **mu_out** (*double[][]*) -- Distribution of outgoing energies
-             and angles for coherent elastic scattering for temperature TTT
-             (in Kelvin)
+
+:Groups:
+         - **distribution** -- Format for angle-energy distributions are
+           detailed in :ref:`angle_energy`.
 
 **/<thermal name>/inelastic/<TTT>K/**
 
@@ -159,18 +249,13 @@ temperature-dependent data set.  For example, the data set corresponding to
 temperature-dependent data set.  For example, the data set corresponding to
 300 Kelvin would be located at `300K`.
 
-:Datasets: - **xs** (:ref:`tabulated <1d_tabulated>`) -- Thermal inelastic
+:Datasets:
+           - **xs** (:ref:`function <1d_functions>`) -- Thermal inelastic
              scattering cross section for temperature TTT (in Kelvin)
-           - **energy_out** (*double[][]*) -- Distribution of outgoing
-             energies for each incoming energy for temperature TTT (in Kelvin).
-             Only present if secondary mode is not continuous.
-           - **mu_out** (*double[][][]*) -- Distribution of scattering cosines
-             for each pair of incoming and outgoing energies. for temperature
-             TTT (in Kelvin).  Only present if secondary mode is not continuous.
 
-If the secondary mode is continuous, the outgoing energy-angle distribution is
-given as a :ref:`correlated angle-energy distribution
-<correlated_angle_energy>`.
+:Groups:
+         - **distribution** -- Format for angle-energy distributions are
+           detailed in :ref:`angle_energy`.
 
 .. _product:
 
@@ -242,7 +327,17 @@ Coherent elastic scattering
 :Datatype: *double[2][]*
 :Description: The first row lists Bragg edges and the second row lists structure
               factor cumulative sums.
-:Attributes: - **type** (*char[]*) -- 'bragg'
+:Attributes: - **type** (*char[]*) -- 'CoherentElastic'
+
+Incoherent elastic scattering
+-----------------------------
+
+:Object type: Dataset
+:Datatype: *double[2]*
+:Description: The first value is the characteristic bound cross section in [b]
+              and the second value is the Debye-Waller integral in
+              [eV\ :math:`^{-1}`].
+:Attributes: - **type** (*char[]*) -- 'IncoherentElastic'
 
 .. _angle_energy:
 
@@ -343,6 +438,68 @@ N-Body Phase Space
              - **atomic_weight_ratio** (*double*) -- Atomic weight ratio of the
                target nuclide in neutron masses
              - **q_value** (*double*) -- Q value for the reaction in eV
+
+Coherent Elastic
+----------------
+
+This angle-energy distribution is used specifically for coherent elastic thermal
+neutron scattering.
+
+:Object type: Group
+:Attributes: - **type** (*char[]*) -- "coherent_elastic"
+:Hard link: - **xs** -- Link to the coherent elastic scattering cross section
+
+Incoherent Elastic
+------------------
+
+This angle-energy distribution is used specifically for incoherent elastic
+thermal neutron scattering (derived from an ENDF file directly).
+
+:Object type: Group
+:Attributes: - **type** (*char[]*) -- "incoherent_elastic"
+:Datasets:
+           - **debye_waller** (*double*) -- Debye-Waller integral in
+             [eV\ :math:`^{-1}`]
+
+Incoherent Elastic (Discrete)
+-----------------------------
+
+This angle-energy distribution is used for discretized incoherent elastic
+thermal neutron scattering distributions that are present in ACE files.
+
+:Object type: Group
+:Attributes: - **type** (*char[]*) -- "incoherent_elastic_discrete"
+:Datasets:
+           - **mu_out** (*double[][]*) -- Equiprobable discrete outgoing
+             angles for each incident neutron energy tabulated
+
+Incoherent Inelastic
+--------------------
+
+This angle-energy distribution is used specifically for (continuous) incoherent
+inelastic thermal neutron scattering.
+
+:Object type: Group
+:Attributes: - **type** (*char[]*) -- "incoherent_inelastic"
+:Datasets: The datasets for this angle-energy distribution are the same as for
+           :ref:`correlated angle-energy distributions
+           <correlated_angle_energy>`.
+
+Incoherent Inelastic (Discrete)
+-------------------------------
+
+This angle-energy distribution is used specifically for incoherent inelastic
+thermal neutron scattering where the distributions have been discretized into
+equiprobable bins.
+
+:Object type: Group
+:Attributes: - **type** (*char[]*) -- "incoherent_inelastic_discrete"
+:Datasets: - **energy_out** (*double[][]*) -- Distribution of outgoing
+             energies for each incoming energy.
+           - **mu_out** (*double[][][]*) -- Distribution of scattering cosines
+             for each pair of incoming and outgoing energies.
+           - **skewed** (*int8_t*) -- Whether discrete angles are equi-probable
+             (0) or have a skewed distribution (1).
 
 .. _energy_distribution:
 

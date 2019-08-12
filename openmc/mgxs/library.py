@@ -3,10 +3,10 @@ import os
 import copy
 import pickle
 from numbers import Integral
-from collections import OrderedDict, Iterable
+from collections import OrderedDict
+from collections.abc import Iterable
 from warnings import warn
 
-from six import string_types
 import numpy as np
 
 import openmc
@@ -51,7 +51,7 @@ class Library(object):
         The types of cross sections in the library (e.g., ['total', 'scatter'])
     domain_type : {'material', 'cell', 'distribcell', 'universe', 'mesh'}
         Domain type for spatial homogenization
-    domains : Iterable of openmc.Material, openmc.Cell, openmc.Universe or openmc.Mesh
+    domains : Iterable of openmc.Material, openmc.Cell, openmc.Universe or openmc.RegularMesh
         The spatial domain(s) for which MGXS in the Library are computed
     correction : {'P0', None}
         Apply the P0 correction to scattering matrices if set to 'P0'
@@ -271,7 +271,7 @@ class Library(object):
 
     @name.setter
     def name(self, name):
-        cv.check_type('name', name, string_types)
+        cv.check_type('name', name, str)
         self._name = name
 
     @mgxs_types.setter
@@ -280,7 +280,7 @@ class Library(object):
         if mgxs_types == 'all':
             self._mgxs_types = all_mgxs_types
         else:
-            cv.check_iterable_type('mgxs_types', mgxs_types, string_types)
+            cv.check_iterable_type('mgxs_types', mgxs_types, str)
             for mgxs_type in mgxs_types:
                 cv.check_value('mgxs_type', mgxs_type, all_mgxs_types)
             self._mgxs_types = mgxs_types
@@ -324,7 +324,7 @@ class Library(object):
                 cv.check_type('domain', domains, Iterable, openmc.Universe)
                 all_domains = self.geometry.get_all_universes().values()
             elif self.domain_type == 'mesh':
-                cv.check_type('domain', domains, Iterable, openmc.Mesh)
+                cv.check_type('domain', domains, Iterable, openmc.RegularMesh)
 
                 # The mesh and geometry are independent, so set all_domains
                 # to the input domains
@@ -587,7 +587,7 @@ class Library(object):
         self._nuclides = statepoint.summary.nuclides
 
         if statepoint.run_mode == 'eigenvalue':
-            self._keff = statepoint.k_combined[0]
+            self._keff = statepoint.k_combined.n
 
         # Load tallies for each MGXS for each domain and mgxs type
         for domain in self.domains:
@@ -606,7 +606,7 @@ class Library(object):
 
         Parameters
         ----------
-        domain : openmc.Material or openmc.Cell or openmc.Universe or openmc.Mesh or Integral
+        domain : openmc.Material or openmc.Cell or openmc.Universe or openmc.RegularMesh or Integral
             The material, cell, or universe object of interest (or its ID)
         mgxs_type : {'total', 'transport', 'nu-transport', 'absorption', 'capture', 'fission', 'nu-fission', 'kappa-fission', 'scatter', 'nu-scatter', 'scatter matrix', 'nu-scatter matrix', 'multiplicity matrix', 'nu-fission matrix', chi', 'chi-prompt', 'inverse-velocity', 'prompt-nu-fission', 'prompt-nu-fission matrix', 'delayed-nu-fission', 'delayed-nu-fission matrix', 'chi-delayed', 'beta'}
             The type of multi-group cross section object to return
@@ -631,7 +631,7 @@ class Library(object):
         elif self.domain_type == 'universe':
             cv.check_type('domain', domain, (openmc.Universe, Integral))
         elif self.domain_type == 'mesh':
-            cv.check_type('domain', domain, (openmc.Mesh, Integral))
+            cv.check_type('domain', domain, (openmc.RegularMesh, Integral))
 
         # Check that requested domain is included in library
         if isinstance(domain, Integral):
@@ -760,7 +760,7 @@ class Library(object):
 
     def build_hdf5_store(self, filename='mgxs.h5', directory='mgxs',
                          subdomains='all', nuclides='all', xs_type='macro',
-                         row_column='inout'):
+                         row_column='inout', libver='earliest'):
         """Export the multi-group cross section library to an HDF5 binary file.
 
         This method constructs an HDF5 file which stores the library's
@@ -794,6 +794,9 @@ class Library(object):
             Store scattering matrices indexed first by incoming group and
             second by outgoing group ('inout'), or vice versa ('outin').
             Defaults to 'inout'.
+        libver : {'earliest', 'latest'}
+            Compatibility mode for the HDF5 file. 'latest' will produce files
+            that are less backwards compatible but have performance benefits.
 
         Raises
         ------
@@ -811,8 +814,8 @@ class Library(object):
                   'since a statepoint has not yet been loaded'
             raise ValueError(msg)
 
-        cv.check_type('filename', filename, string_types)
-        cv.check_type('directory', directory, string_types)
+        cv.check_type('filename', filename, str)
+        cv.check_type('directory', directory, str)
 
         import h5py
 
@@ -823,7 +826,7 @@ class Library(object):
         # Add an attribute for the number of energy groups to the HDF5 file
         full_filename = os.path.join(directory, filename)
         full_filename = full_filename.replace(' ', '-')
-        f = h5py.File(full_filename, 'w')
+        f = h5py.File(full_filename, 'w', libver=libver)
         f.attrs['# groups'] = self.num_groups
         f.close()
 
@@ -854,8 +857,8 @@ class Library(object):
 
         """
 
-        cv.check_type('filename', filename, string_types)
-        cv.check_type('directory', directory, string_types)
+        cv.check_type('filename', filename, str)
+        cv.check_type('directory', directory, str)
 
         # Make directory if it does not exist
         if not os.path.exists(directory):
@@ -889,8 +892,8 @@ class Library(object):
 
         """
 
-        cv.check_type('filename', filename, string_types)
-        cv.check_type('directory', directory, string_types)
+        cv.check_type('filename', filename, str)
+        cv.check_type('directory', directory, str)
 
         # Make directory if it does not exist
         if not os.path.exists(directory):
@@ -913,7 +916,7 @@ class Library(object):
 
         Parameters
         ----------
-        domain : openmc.Material or openmc.Cell or openmc.Universe or openmc.Mesh
+        domain : openmc.Material or openmc.Cell or openmc.Universe or openmc.RegularMesh
             The domain for spatial homogenization
         xsdata_name : str
             Name to apply to the "xsdata" entry produced by this method
@@ -927,7 +930,7 @@ class Library(object):
         subdomain : iterable of int
             This parameter is not used unless using a mesh domain. In that
             case, the subdomain is an [i,j,k] index (1-based indexing) of the
-            mesh cell of interest in the openmc.Mesh object.  Note:
+            mesh cell of interest in the openmc.RegularMesh object.  Note:
             this parameter currently only supports subdomains within a mesh,
             and not the subdomains of a distribcell.
 
@@ -949,9 +952,9 @@ class Library(object):
         """
 
         cv.check_type('domain', domain, (openmc.Material, openmc.Cell,
-                                         openmc.Universe, openmc.Mesh))
-        cv.check_type('xsdata_name', xsdata_name, string_types)
-        cv.check_type('nuclide', nuclide, string_types)
+                                         openmc.Universe, openmc.RegularMesh))
+        cv.check_type('xsdata_name', xsdata_name, str)
+        cv.check_type('nuclide', nuclide, str)
         cv.check_value('xs_type', xs_type, ['macro', 'micro'])
         if subdomain is not None:
             cv.check_iterable_type('subdomain', subdomain, Integral,
@@ -1210,16 +1213,15 @@ class Library(object):
 
         cv.check_value('xs_type', xs_type, ['macro', 'micro'])
         if xsdata_names is not None:
-            cv.check_iterable_type('xsdata_names', xsdata_names, string_types)
+            cv.check_iterable_type('xsdata_names', xsdata_names, str)
 
         # If gathering material-specific data, set the xs_type to macro
         if not self.by_nuclide:
             xs_type = 'macro'
 
         # Initialize file
-        mgxs_file = openmc.MGXSLibrary(self.energy_groups,
-                                       num_delayed_groups=\
-                                       self.num_delayed_groups)
+        mgxs_file = openmc.MGXSLibrary(
+            self.energy_groups, num_delayed_groups=self.num_delayed_groups)
 
         if self.domain_type == 'mesh':
             # Create the xsdata objects and add to the mgxs_file
@@ -1228,7 +1230,7 @@ class Library(object):
                 if self.by_nuclide:
                     raise NotImplementedError("Mesh domains do not currently "
                                               "support nuclidic tallies")
-                for subdomain in domain.cell_generator():
+                for subdomain in domain.indices:
                     # Build & add metadata to XSdata object
                     if xsdata_names is None:
                         xsdata_name = 'set' + str(i + 1)
@@ -1343,7 +1345,7 @@ class Library(object):
             geometry.root_universe = root
             materials = openmc.Materials()
 
-            for i, subdomain in enumerate(self.domains[0].cell_generator()):
+            for i, subdomain in enumerate(self.domains[0].indices):
                 xsdata = mgxs_file.xsdatas[i]
 
                 # Build the macroscopic and assign it to the cell of
@@ -1398,24 +1400,16 @@ class Library(object):
 
         The rules to check include:
 
-        - Either total or transport should be present.
+        - Either total or transport must be present.
 
           - Both can be available if one wants, but we should
             use whatever corresponds to Library.correction (if P0: transport)
 
-        - Absorption and total (or transport) are required.
+        - Absorption is required.
         - A nu-fission cross section and chi values are not required as a
           fixed source problem could be the target.
         - Fission and kappa-fission are not required as they are only
           needed to support tallies the user may wish to request.
-        - A nu-scatter matrix is required.
-
-          - Having a multiplicity matrix is preferred.
-          - Having both nu-scatter (of any order) and scatter
-            (at least isotropic) matrices is the second choice.
-          - If only nu-scatter, need total (not transport), to
-            be used in adjusting absorption
-            (i.e., reduced_abs = tot - nuscatt)
 
         See also
         --------
@@ -1425,36 +1419,51 @@ class Library(object):
         """
 
         error_flag = False
+
+        # if correction is 'P0', then transport must be provided
+        # otherwise total must be provided
+        if self.correction == 'P0':
+            if ('transport' not in self.mgxs_types and
+                'nu-transport' not in self.mgxs_types):
+                error_flag = True
+                warn('If the "correction" parameter is "P0", then a '
+                     '"transport" or "nu-transport" MGXS type is required.')
+        else:
+            if 'total' not in self.mgxs_types:
+                error_flag = True
+                warn('If the "correction" parameter is None, then a '
+                     '"total" MGXS type is required.')
+
+        # Check consistency of "nu-transport" and "nu-scatter"
+        if 'nu-transport' in self.mgxs_types:
+            if not ('nu-scatter matrix' in self.mgxs_types or
+                    'consistent nu-scatter matrix' in self.mgxs_types):
+                error_flag = True
+                warn('If a "nu-transport" MGXS type is used then a '
+                     '"nu-scatter matrix" or "consistent nu-scatter matrix" '
+                     'must also be used.')
+        elif 'transport' in self.mgxs_types:
+            if not ('scatter matrix' in self.mgxs_types or
+                    'consistent scatter matrix' in self.mgxs_types):
+                error_flag = True
+                warn('If a "transport" MGXS type is used then a '
+                     '"scatter matrix" or "consistent scatter matrix" '
+                     'must also be used.')
+
+        # Make sure there is some kind of a scattering matrix data
+        if 'nu-scatter matrix' not in self.mgxs_types and \
+            'consistent nu-scatter matrix' not in self.mgxs_types and \
+            'scatter matrix' not in self.mgxs_types and \
+            'consistent scatter matrix' not in self.mgxs_types:
+            error_flag = True
+            warn('A "nu-scatter matrix", "consistent nu-scatter matrix", '
+                 '"scatter matrix", or "consistent scatter matrix" MGXS '
+                 'type is required.')
+
         # Ensure absorption is present
         if 'absorption' not in self.mgxs_types:
             error_flag = True
             warn('An "absorption" MGXS type is required but not provided.')
-        # Ensure nu-scattering matrix is required
-        if 'nu-scatter matrix' not in self.mgxs_types and \
-            'consistent nu-scatter matrix' not in self.mgxs_types:
-            error_flag = True
-            warn('A "nu-scatter matrix" MGXS type is required but not provided.')
-        else:
-            # Ok, now see the status of scatter and/or multiplicity
-            if 'scatter matrix' not in self.mgxs_types or \
-                'consistent scatter matrix' not in self.mgxs_types and \
-                'multiplicity matrix' not in self.mgxs_types:
-                # We dont have data needed for multiplicity matrix, therefore
-                # we need total, and not transport.
-                if 'total' not in self.mgxs_types:
-                    error_flag = True
-                    warn('A "total" MGXS type is required if a '
-                         'scattering matrix is not provided.')
-        # Total or transport can be present, but if using
-        # self.correction=="P0", then we should use transport.
-        if self.correction == "P0" and 'nu-transport' not in self.mgxs_types:
-            error_flag = True
-            warn('A "nu-transport" MGXS type is required since a "P0" '
-                 'correction is applied, but a "nu-transport" MGXS is '
-                 'not provided.')
-        elif self.correction is None and 'total' not in self.mgxs_types:
-            error_flag = True
-            warn('A "total" MGXS type is required, but not provided.')
 
         if error_flag:
             raise ValueError('Invalid MGXS configuration encountered.')

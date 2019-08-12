@@ -18,21 +18,6 @@ path to the XML cross section listing when in continuous-energy mode, and the
 :envvar:`OPENMC_MG_CROSS_SECTIONS` environment variable will be used in
 multi-group mode.
 
-.. _multipole_library:
-
--------------------------------
-``<multipole_library>`` Element
--------------------------------
-
-The ``<multipole_library>`` element indicates the directory containing a
-windowed multipole library. If a windowed multipole library is available,
-OpenMC can use it for on-the-fly Doppler-broadening of resolved resonance range
-cross sections. If this element is absent from the settings.xml file, the
-:envvar:`OPENMC_MULTIPOLE_LIBRARY` environment variable will be used.
-
-  .. note:: The <temperature_multipole> element must also be set to "true" for
-    windowed multipole functionality.
-
 .. _material:
 
 ----------------------
@@ -50,9 +35,14 @@ Each ``material`` element can have the following attributes or sub-elements:
 
     *Default*: ""
 
+  :depletable:
+    Boolean value indicating whether the material is depletable.
+
+  :volume:
+    Volume of the material in cm^3.
+
   :temperature:
-    An element with no attributes which is used to set the default temperature
-    of the material in Kelvin.
+    Temperature of the material in Kelvin.
 
     *Default*: If a material default temperature is not given and a cell
     temperature is not specified, the :ref:`global default temperature
@@ -92,19 +82,7 @@ Each ``material`` element can have the following attributes or sub-elements:
     .. note:: If one nuclide is specified in atom percent, all others must also
               be given in atom percent. The same applies for weight percentages.
 
-    An optional attribute/sub-element for each nuclide is ``scattering``. This
-    attribute may be set to "data" to use the scattering laws specified by the
-    cross section library (default). Alternatively, when set to "iso-in-lab",
-    the scattering laws are used to sample the outgoing energy but an
-    isotropic-in-lab  distribution is used to sample the outgoing angle at each
-    scattering interaction. The ``scattering`` attribute may be most useful
-    when using OpenMC to compute multi-group cross-sections for deterministic
-    transport codes and to quantify the effects of anisotropic scattering.
-
     *Default*: None
-
-    .. note:: The ``scattering`` attribute/sub-element is not used in the
-              multi-group :ref:`energy_mode`.
 
   :sab:
     Associates an S(a,b) table with the material. This element has an
@@ -116,6 +94,17 @@ Each ``material`` element can have the following attributes or sub-elements:
     defaults to unity.
 
     *Default*: None
+
+    .. note:: This element is not used in the multi-group :ref:`energy_mode`.
+
+  :isotropic:
+    The ``isotropic`` element indicates a list of nuclides for which elastic
+    scattering should be treated as though it were isotropic in the laboratory
+    system. This element may be most useful when using OpenMC to compute
+    multi-group cross-sections for deterministic transport codes and to quantify
+    the effects of anisotropic scattering.
+
+    *Default*: No nuclides are treated as have isotropic elastic scattering.
 
     .. note:: This element is not used in the multi-group :ref:`energy_mode`.
 

@@ -201,7 +201,7 @@ Each ``<cell>`` element can have the following attributes or sub-elements:
 
     .. math::
 
-       \left [ \begin{array}{ccc} \cos\theta \cos\psi & -\cos\theta \sin\psi +
+       \left [ \begin{array}{ccc} \cos\theta \cos\psi & -\cos\phi \sin\psi +
        \sin\phi \sin\theta \cos\psi & \sin\phi \sin\psi + \cos\phi \sin\theta
        \cos\psi \\ \cos\theta \sin\psi & \cos\phi \cos\psi + \sin\phi \sin\theta
        \sin\psi & -\sin\phi \cos\psi + \cos\phi \sin\theta \sin\psi \\
@@ -317,6 +317,13 @@ the following attributes or sub-elements:
     element is optional.
 
     *Default*: None
+
+  :orientation:
+    The orientation of the hexagonal lattice. The string "x" indicates that two
+    sides of the lattice are parallel to the x-axis, whereas the string "y"
+    indicates that two sides are parallel to the y-axis.
+
+    *Default*: "y"
 
   :center:
     The coordinates of the center of the lattice. If the lattice does not have

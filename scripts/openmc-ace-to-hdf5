@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import argparse
 import os
@@ -25,13 +25,6 @@ follows the NNDC data convention (1000*Z + A + 300 + 100*m), or the MCNP data
 convention (essentially the same as NNDC, except that the first metastable state
 of Am242 is 95242 and the ground state is 95642).
 
-The optional --fission_energy_release argument will accept an HDF5 file
-containing a library of fission energy release (ENDF MF=1 MT=458) data. A
-library built from ENDF/B-VII.1 data is released with OpenMC and can be found at
-openmc/data/fission_Q_data_endb71.h5. This data is necessary for
-'fission-q-prompt' and 'fission-q-recoverable' tallies, but is not needed
-otherwise.
-
 """
 
 class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter,
@@ -46,7 +39,8 @@ parser.add_argument('libraries', nargs='*',
                     help='ACE libraries to convert to HDF5')
 parser.add_argument('-d', '--destination', default='.',
                     help='Directory to create new library in')
-parser.add_argument('-m', '--metastable', choices=['mcnp', 'nndc'], default='nndc',
+parser.add_argument('-m', '--metastable', choices=['mcnp', 'nndc'],
+                    default='nndc',
                     help='How to interpret ZAIDs for metastable nuclides')
 parser.add_argument('--xml', help='Old-style cross_sections.xml that '
                     'lists ACE libraries')
@@ -54,8 +48,10 @@ parser.add_argument('--xsdir', help='MCNP xsdir file that lists '
                     'ACE libraries')
 parser.add_argument('--xsdata', help='Serpent xsdata file that lists '
                     'ACE libraries')
-parser.add_argument('--fission_energy_release', help='HDF5 file containing '
-                    'fission energy release data')
+parser.add_argument('--libver', choices=['earliest', 'latest'],
+                    default='earliest', help="Output HDF5 versioning. Use "
+                    "'earliest' for backwards compatibility or 'latest' for "
+                    "performance")
 args = parser.parse_args()
 
 if not os.path.isdir(args.destination):
@@ -137,20 +133,13 @@ for filename in ace_libraries:
                     print('Failed to convert {}: {}'.format(table.name, e))
                     continue
 
-                # Fission energy release data, if available
-                if args.fission_energy_release is not None:
-                    fer = openmc.data.FissionEnergyRelease.from_compact_hdf5(
-                        args.fission_energy_release, neutron)
-                    if fer is not None:
-                        neutron.fission_energy = fer
-
                 print('Converting {} (ACE) to {} (HDF5)'.format(table.name,
                                                                 neutron.name))
 
                 # Determine filename
                 outfile = os.path.join(args.destination,
                                        neutron.name.replace('.', '_') + '.h5')
-                neutron.export_to_hdf5(outfile, 'w')
+                neutron.export_to_hdf5(outfile, 'w', libver=args.libver)
 
                 # Register with library
                 library.register_file(outfile)
@@ -162,10 +151,11 @@ for filename in ace_libraries:
                 try:
                     neutron = \
                         openmc.data.IncidentNeutron.from_hdf5(nuclides[name])
-                    print('Converting {} (ACE) to {} (HDF5)'.format(table.name,
-                                                                    neutron.name))
+                    print('Converting {} (ACE) to {} (HDF5)'
+                          .format(table.name, neutron.name))
                     neutron.add_temperature_from_ace(table, args.metastable)
-                    neutron.export_to_hdf5(nuclides[name] + '_1', 'w')
+                    neutron.export_to_hdf5(nuclides[name] + '_1', 'w',
+                                           libver=args.libver)
                     os.rename(nuclides[name] + '_1', nuclides[name])
                 except Exception as e:
                     print('Failed to convert {}: {}'.format(table.name, e))
@@ -187,7 +177,7 @@ for filename in ace_libraries:
                 # Determine filename
                 outfile = os.path.join(args.destination,
                                        thermal.name.replace('.', '_') + '.h5')
-                thermal.export_to_hdf5(outfile, 'w')
+                thermal.export_to_hdf5(outfile, 'w', libver=args.libver)
 
                 # Register with library
                 library.register_file(outfile)
@@ -198,11 +188,13 @@ for filename in ace_libraries:
             else:
                 # Then we only need to append the data
                 try:
-                    thermal = openmc.data.ThermalScattering.from_hdf5(nuclides[name])
-                    print('Converting {} (ACE) to {} (HDF5)'.format(table.name,
-                                                                    thermal.name))
+                    thermal = openmc.data.ThermalScattering.from_hdf5(
+                                                                 nuclides[name])
+                    print('Converting {} (ACE) to {} (HDF5)'
+                          .format(table.name,thermal.name))
                     thermal.add_temperature_from_ace(table)
-                    thermal.export_to_hdf5(nuclides[name] + '_1', 'w')
+                    thermal.export_to_hdf5(nuclides[name] + '_1', 'w',
+                                           libver=args.libver)
                     os.rename(nuclides[name] + '_1', nuclides[name])
                 except Exception as e:
                     print('Failed to convert {}: {}'.format(table.name, e))

@@ -1,7 +1,8 @@
-from collections import Iterable
+from collections.abc import Iterable
+from pathlib import Path
 
 import openmc
-from openmc.checkvalue import check_type
+from openmc.checkvalue import check_type, check_value
 
 
 class Model(object):
@@ -25,8 +26,6 @@ class Model(object):
         Settings information
     tallies : openmc.Tallies, optional
         Tallies information
-    cmfd : openmc.CMFD, optional
-        CMFD information
     plots : openmc.Plots, optional
         Plot information
 
@@ -40,19 +39,16 @@ class Model(object):
         Settings information
     tallies : openmc.Tallies
         Tallies information
-    cmfd : openmc.CMFD
-        CMFD information
     plots : openmc.Plots
         Plot information
 
     """
 
     def __init__(self, geometry=None, materials=None, settings=None,
-                 tallies=None, cmfd=None, plots=None):
+                 tallies=None, plots=None):
         self.geometry = openmc.Geometry()
         self.materials = openmc.Materials()
         self.settings = openmc.Settings()
-        self.cmfd = cmfd
         self.tallies = openmc.Tallies()
         self.plots = openmc.Plots()
 
@@ -82,10 +78,6 @@ class Model(object):
     @property
     def tallies(self):
         return self._tallies
-
-    @property
-    def cmfd(self):
-        return self._cmfd
 
     @property
     def plots(self):
@@ -121,11 +113,6 @@ class Model(object):
             for tally in tallies:
                 self._tallies.append(tally)
 
-    @cmfd.setter
-    def cmfd(self, cmfd):
-        check_type('cmfd', cmfd, (openmc.CMFD, type(None)))
-        self._cmfd = cmfd
-
     @plots.setter
     def plots(self, plots):
         check_type('plots', plots, Iterable, openmc.Plot)
@@ -136,29 +123,78 @@ class Model(object):
             for plot in plots:
                 self._plots.append(plot)
 
-    def export_to_xml(self):
-        """Export model to XML files.
-        """
+    def deplete(self, timesteps, chain_file=None, method='cecm',
+                fission_q=None, **kwargs):
+        """Deplete model using specified timesteps/power
 
-        self.settings.export_to_xml()
-        self.geometry.export_to_xml()
+        Parameters
+        ----------
+        timesteps : iterable of float
+            Array of timesteps in units of [s]. Note that values are not
+            cumulative.
+        chain_file : str, optional
+            Path to the depletion chain XML file.  Defaults to the chain
+            found under the ``depletion_chain`` in the
+            :envvar:`OPENMC_CROSS_SECTIONS` environment variable if it exists.
+        method : str
+             Integration method used for depletion (e.g., 'cecm', 'predictor')
+        fission_q : dict, optional
+            Dictionary of nuclides and their fission Q values [eV].
+            If not given, values will be pulled from the ``chain_file``.
+        **kwargs
+            Keyword arguments passed to integration function (e.g.,
+            :func:`openmc.deplete.integrator.cecm`)
+
+        """
+        # Import the depletion module.  This is done here rather than the module
+        # header to delay importing openmc.capi (through openmc.deplete) which
+        # can be tough to install properly.
+        import openmc.deplete as dep
+
+        # Create OpenMC transport operator
+        op = dep.Operator(
+            self.geometry, self.settings, chain_file,
+            fission_q=fission_q,
+        )
+
+        # Perform depletion
+        check_value('method', method, ('cecm', 'predictor', 'cf4', 'epc_rk4',
+                                       'si_celi', 'si_leqi', 'celi', 'leqi'))
+        getattr(dep.integrator, method)(op, timesteps, **kwargs)
+
+    def export_to_xml(self, directory='.'):
+        """Export model to XML files.
+
+        Parameters
+        ----------
+        directory : str
+            Directory to write XML files to. If it doesn't exist already, it
+            will be created.
+
+        """
+        # Create directory if
+        d = Path(directory)
+        if not d.is_dir():
+            d.mkdir(parents=True)
+
+        self.settings.export_to_xml(d)
+        if not self.settings.dagmc:
+            self.geometry.export_to_xml(d)
 
         # If a materials collection was specified, export it. Otherwise, look
         # for all materials in the geometry and use that to automatically build
         # a collection.
         if self.materials:
-            self.materials.export_to_xml()
+            self.materials.export_to_xml(d)
         else:
             materials = openmc.Materials(self.geometry.get_all_materials()
                                          .values())
-            materials.export_to_xml()
+            materials.export_to_xml(d)
 
         if self.tallies:
-            self.tallies.export_to_xml()
-        if self.cmfd is not None:
-            self.cmfd.export_to_xml()
+            self.tallies.export_to_xml(d)
         if self.plots:
-            self.plots.export_to_xml()
+            self.plots.export_to_xml(d)
 
     def run(self, **kwargs):
         """Creates the XML files, runs OpenMC, and returns k-effective
@@ -166,19 +202,17 @@ class Model(object):
         Parameters
         ----------
         **kwargs
-            All keyword arguments are passed to openmc.run
+            All keyword arguments are passed to :func:`openmc.run`
 
         Returns
         -------
-        2-tuple of float
+        uncertainties.UFloat
             Combined estimator of k-effective from the statepoint
 
         """
         self.export_to_xml()
 
-        return_code = openmc.run(**kwargs)
-
-        assert (return_code == 0), "OpenMC did not execute successfully"
+        openmc.run(**kwargs)
 
         n = self.settings.batches
         if self.settings.statepoint is not None:

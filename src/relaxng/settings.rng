@@ -12,6 +12,11 @@
       </element>
     </optional>
     <optional>
+      <element name="create_fission_neutrons">
+        <data type="boolean"/>
+      </element>
+    </optional>
+    <optional>
       <element name="cutoff">
         <interleave>
           <optional>
@@ -250,7 +255,7 @@
       </element>
     </optional>
     <optional>
-      <element name="run_cmfd">
+      <element name="dagmc">
         <data type="boolean"/>
       </element>
     </optional>
@@ -269,6 +274,16 @@
         <grammar>
           <start>
             <interleave>
+              <optional>
+                <choice>
+                  <element name="particle">
+                    <data type="string"/>
+                  </element>
+                  <attribute name="particle">
+                    <data type="string"/>
+                  </attribute>
+                </choice>
+              </optional>
               <optional>
                 <choice>
                   <element name="strength">

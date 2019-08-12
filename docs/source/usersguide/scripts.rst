@@ -95,83 +95,29 @@ otherwise.
 --fission_energy_release FISSION_ENERGY_RELEASE
                       HDF5 file containing fission energy release data
 
-.. _scripts_mcnp70:
+.. _scripts_compton:
 
-------------------------------
-``openmc-convert-mcnp70-data``
-------------------------------
+-----------------------
+``openmc-make-compton``
+-----------------------
 
-This script converts ENDF/B-VII.0 ACE data from the MCNP5/6 distribution into an
-HDF5 library that can be used by OpenMC. This assumes that you have a directory
-containing files named endf70a, endf70b, ..., endf70k, and endf70sab. The path
-to the directory containing these files should be given as a positional
-argument. The following optional arguments are available:
+This script generates an HDF5 file called ``compton_profiles.h5`` that contains
+Compton profile data using an existing data library from `Geant4
+<http://geant4.cern.ch/>`_. Note that OpenMC includes this data file by default
+so it should not be necessary in practice to generate it yourself.
 
--d DESTINATION, --destination DESTINATION
-    Directory to create new library in (Default: mcnp_endfb70)
+.. _scripts_stopping:
 
-.. _scripts_mcnp71:
+-------------------------------
+``openmc-make-stopping-powers``
+-------------------------------
 
-------------------------------
-``openmc-convert-mcnp71-data``
-------------------------------
-
-This script converts ENDF/B-VII.1 ACE data from the MCNP6 distribution into an
-HDF5 library that can be used by OpenMC. This assumes that you have a directory
-containing subdirectories 'endf71x' and 'ENDF71SaB'. The path to the directory
-containing these subdirectories should be given as a positional argument. The
-following optional arguments are available:
-
--d DESTINATION, --destination DESTINATION
-     Directory to create new library in (Default: mcnp_endfb71)
-
--f FER, --fission_energy_release FER
-     HDF5 file containing fission energy release data
-
-.. _scripts_jeff:
-
-------------------------
-``openmc-get-jeff-data``
-------------------------
-
-This script downloads `JEFF 3.2 ACE data
-<https://www.oecd-nea.org/dbforms/data/eva/evatapes/jeff_32/>`_ from OECD/NEA
-and converts it to a multi-temperature HDF5 library for use with OpenMC. It has
-the following optional arguments:
-
--b, --batch
-    Suppress standard in
-
--d DESTINATION, --destination DESTINATION
-    Directory to create new library in (default: jeff-3.2-hdf5)
-
-.. warning:: This script will download approximately 9 GB of data. Extracting
-             and processing the data may require as much as 40 GB of additional
-             free disk space.
-
-.. _scripts_multipole:
-
------------------------------
-``openmc-get-multipole-data``
------------------------------
-
-This script downloads and extracts windowed multipole data based on
-ENDF/B-VII.1. It has the following optional arguments:
-
--b, --batch     Suppress standard in
-
-.. _scripts_nndc:
-
-------------------------
-``openmc-get-nndc-data``
-------------------------
-
-This script downloads `ENDF/B-VII.1 ACE data
-<http://www.nndc.bnl.gov/endf/b7.1/acefiles.html>`_ from NNDC and converts it to
-an HDF5 library for use with OpenMC. This data is used for OpenMC's regression
-test suite. This script has the following optional arguments:
-
--b, --batch     Suppress standard in
+This script generates an HDF5 file called ``stopping_power.h5`` that contains
+radiative and collision stopping powers and mean excitation energy pulled from
+the `NIST ESTAR database
+<https://physics.nist.gov/PhysRefData/Star/Text/ESTAR.html>`_. Note that OpenMC
+includes this data file by default so it should not be necessary in practice to
+generate it yourself.
 
 .. _scripts_plot:
 
@@ -260,24 +206,21 @@ Message                   Description
 .. _scripts_voxel:
 
 ---------------------------
-``openmc-voxel-to-silovtk``
+``openmc-voxel-to-vtk``
 ---------------------------
 
 When OpenMC generates :ref:`voxel plots <usersguide_voxel>`, they are in an
 :ref:`HDF5 format <io_voxel>` that is not terribly useful by itself. The
-``openmc-voxel-to-silovtk`` script converts a voxel HDF5 file to `VTK
-<http://www.vtk.org/>`_ or `SILO
-<https://wci.llnl.gov/simulation/computer-codes/silo>`_ file. For VTK, you need
-to have the VTK Python bindings installed. For SILO, you need to have `silomesh
-<https://github.com/nhorelik/silomesh>`_ installed. To convert a voxel file,
-simply provide the path to the file:
+``openmc-voxel-to-vtk`` script converts a voxel HDF5 file to a `VTK
+<http://www.vtk.org/>`_ file. To run this script, you will need to have the VTK
+Python bindings installed. To convert a voxel file, simply provide the path to
+the file:
 
 .. code-block:: sh
 
-   openmc-voxel-to-silovtk voxel_1.h5
+   openmc-voxel-to-vtk voxel_1.h5
 
-The ``openmc-voxel-to-silovtk`` script also takes the following optional
+The ``openmc-voxel-to-vtk`` script also takes the following optional
 command-line arguments:
 
--o, --output   Path to output VTK or SILO file
--s, --silo     Flag to convert to SILO instead of VTK
+-o, --output   Path to output VTK file

@@ -1,4 +1,4 @@
-from collections import Iterable
+from collections.abc import Iterable
 import re
 import warnings
 
@@ -9,7 +9,7 @@ import openmc
 import openmc.checkvalue as cv
 from openmc.region import Region
 
-_VERSION_SUMMARY = 5
+_VERSION_SUMMARY = 6
 
 
 class Summary(object):
@@ -26,6 +26,8 @@ class Summary(object):
     nuclides : dict
         Dictionary whose keys are nuclide names and values are atomic weight
         ratios.
+    macroscopics : list
+        Names of macroscopic data sets
     version: tuple of int
         Version of OpenMC
 
@@ -44,13 +46,15 @@ class Summary(object):
         self._fast_materials = {}
         self._fast_surfaces = {}
         self._fast_cells = {}
-        self._fast_universes  = {}
+        self._fast_universes = {}
         self._fast_lattices = {}
 
         self._materials = openmc.Materials()
         self._nuclides = {}
+        self._macroscopics = []
 
         self._read_nuclides()
+        self._read_macroscopics()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", openmc.IDWarning)
             self._read_geometry()
@@ -72,16 +76,30 @@ class Summary(object):
         return self._nuclides
 
     @property
+    def macroscopics(self):
+        return self._macroscopics
+
+    @property
     def version(self):
         return tuple(self._f.attrs['openmc_version'])
 
     def _read_nuclides(self):
-        names = self._f['nuclides/names'].value
-        awrs = self._f['nuclides/awrs'].value
-        for name, awr in zip(names, awrs):
-            self._nuclides[name.decode()] = awr
+        if 'nuclides/names' in self._f:
+            names = self._f['nuclides/names'][()]
+            awrs = self._f['nuclides/awrs'][()]
+            for name, awr in zip(names, awrs):
+                self._nuclides[name.decode()] = awr
+
+    def _read_macroscopics(self):
+        if 'macroscopics/names' in self._f:
+            names = self._f['macroscopics/names'][()]
+            for name in names:
+                self._macroscopics = name.decode()
 
     def _read_geometry(self):
+        if "dagmc" in self._f['geometry'].attrs.keys():
+            return
+
         # Read in and initialize the Materials and Geometry
         self._read_materials()
         self._read_surfaces()
@@ -112,34 +130,34 @@ class Summary(object):
 
         for key, group in self._f['geometry/cells'].items():
             cell_id = int(key.lstrip('cell '))
-            name = group['name'].value.decode() if 'name' in group else ''
-            fill_type = group['fill_type'].value.decode()
+            name = group['name'][()].decode() if 'name' in group else ''
+            fill_type = group['fill_type'][()].decode()
 
             if fill_type == 'material':
-                fill = group['material'].value
+                fill = group['material'][()]
             elif fill_type == 'universe':
-                fill = group['fill'].value
+                fill = group['fill'][()]
             else:
-                fill = group['lattice'].value
+                fill = group['lattice'][()]
 
-            region = group['region'].value.decode() if 'region' in group else ''
+            region = group['region'][()].decode() if 'region' in group else ''
 
             # Create this Cell
             cell = openmc.Cell(cell_id=cell_id, name=name)
 
             if fill_type == 'universe':
                 if 'translation' in group:
-                    translation = group['translation'][...]
+                    translation = group['translation'][()]
                     translation = np.asarray(translation, dtype=np.float64)
                     cell.translation = translation
 
                 if 'rotation' in group:
-                    rotation = group['rotation'][...]
+                    rotation = group['rotation'][()]
                     rotation = np.asarray(rotation, dtype=np.int)
                     cell._rotation = rotation
 
             elif fill_type == 'material':
-                cell.temperature = group['temperature'][...]
+                cell.temperature = group['temperature'][()]
 
             # Store Cell fill information for after Universe/Lattice creation
             cell_fills[cell.id] = (fill_type, fill)

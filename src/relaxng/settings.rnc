@@ -3,6 +3,8 @@ element settings {
 
   element confidence_intervals { xsd:boolean }? &
 
+  element create_fission_neutrons { xsd:boolean }? &
+
   element cutoff {
     (element weight { xsd:double } | attribute weight { xsd:double })? &
     (element weight_avg { xsd:double } | attribute weight_avg { xsd:double })?
@@ -55,7 +57,7 @@ element settings {
 
   element ptables { xsd:boolean }? &
 
-  element run_cmfd { xsd:boolean }? &
+  element dagmc { xsd:boolean }? &
 
   element run_mode { xsd:string }? &
 
@@ -64,6 +66,7 @@ element settings {
   element source {
     grammar {
       start =
+        (element particle { xsd:string } | attribute particle { xsd:string })? &
         (element strength { xsd:double } | attribute strength { xsd:double })? &
         (element file { xsd:string } | attribute file { xsd:string })? &
         element space {

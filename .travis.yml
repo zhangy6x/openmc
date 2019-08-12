@@ -1,67 +1,58 @@
 sudo: required
-dist: trusty
+dist: xenial
 language: python
-python:
-  - "2.7"
-  - "3.4"
 addons:
   apt:
     packages:
-    - gfortran
-    - g++
-    - mpich
-    - libmpich-dev
+      - mpich
+      - libmpich-dev
+      - libhdf5-serial-dev
+      - libhdf5-mpich-dev
+      - libblas-dev
+      - liblapack-dev
+    config:
+      retries: true
+services:
+  - xvfb
 cache:
   directories:
   - $HOME/nndc_hdf5
+  - $HOME/endf-b-vii.1
 env:
-  - OPENMC_CONFIG="check_source"
-  - OPENMC_CONFIG="^hdf5-debug$"
-  - OPENMC_CONFIG="^omp-hdf5-debug$"
-  - OPENMC_CONFIG="^mpi-hdf5-debug$"
-  - OPENMC_CONFIG="^phdf5-debug$"
-
-# We aren't testing the check_source script so just run it with Python 3.
+  global:
+    - MPI_DIR=/usr
+    - HDF5_ROOT=/usr
+    - OMP_NUM_THREADS=2
+    - OPENMC_CROSS_SECTIONS=$HOME/nndc_hdf5/cross_sections.xml
+    - OPENMC_ENDF_DATA=$HOME/endf-b-vii.1
+    - LD_LIBRARY_PATH=$HOME/MOAB/lib:$HOME/DAGMC/lib
+    - PATH=$PATH:$HOME/NJOY2016/build
+    - COVERALLS_PARALLEL=true
+    - NUMPY_EXPERIMENTAL_ARRAY_FUNCTION=0
 matrix:
-  exclude:
-    - python: "2.7"
-      env: OPENMC_CONFIG="check_source"
-
-before_install:
-  - if [[ $OPENMC_CONFIG != "check_source" ]]; then
-      sudo add-apt-repository ppa:nschloe/hdf5-backports -y;
-      sudo apt-get update -q;
-      sudo apt-get install libhdf5-serial-dev libhdf5-mpich-dev -y;
-      export FC=gfortran;
-      export MPI_DIR=/usr;
-      export PHDF5_DIR=/usr;
-      export HDF5_DIR=/usr;
-    fi
-
+  include:
+    - python: "3.5"
+      env: OMP=n MPI=n PHDF5=n
+    - python: "3.6"
+      env: OMP=n MPI=n PHDF5=n
+    - python: "3.7"
+      env: OMP=n MPI=n PHDF5=n
+    - python: "3.7"
+      env: OMP=y MPI=n PHDF5=n
+    - python: "3.7"
+      env: OMP=n MPI=y PHDF5=n
+    - python: "3.7"
+      env: OMP=n MPI=y PHDF5=y
+    - python: "3.7"
+      env: OMP=y MPI=y PHDF5=y DAGMC=y
+notifications:
+  webhooks: https://coveralls.io/webhook?repo_token=$COVERALLS_REPO_TOKEN
 install:
-  - if [[ $OPENMC_CONFIG != "check_source" ]]; then
-      pip install numpy cython;
-      pip install -e .[test];
-    fi
-
+  - ./tools/ci/travis-install.sh
 before_script:
-  - if [[ $OPENMC_CONFIG != "check_source" ]]; then
-      if [[ ! -e $HOME/nndc_hdf5/cross_sections.xml ]]; then
-        wget https://anl.box.com/shared/static/a6sw2cep34wlz6b9i9jwiotaqoayxcxt.xz -O - | tar -C $HOME -xvJ;
-      fi;
-      export OPENMC_CROSS_SECTIONS=$HOME/nndc_hdf5/cross_sections.xml;
-      git clone --branch=master git://github.com/smharper/windowed_multipole_library.git wmp_lib;
-      tar xzvf wmp_lib/multipole_lib.tar.gz;
-      export OPENMC_MULTIPOLE_LIBRARY=$PWD/multipole_lib;
-    fi
-
+  - ./tools/ci/travis-before-script.sh
 script:
-  - cd tests
-  - export OMP_NUM_THREADS=2
-  - if [[ $OPENMC_CONFIG == "check_source" ]]; then
-      ./check_source.py;
-    else
-      ./run_tests.py -C $OPENMC_CONFIG -j 2 &&
-      pytest --cov=../openmc unit_tests/;
-    fi
-  - cd ..
+  - ./tools/ci/travis-script.sh
+after_success:
+  - cpp-coveralls -i src -i include --exclude-pattern "/usr/*" --dump cpp_cov.json
+  - coveralls --merge=cpp_cov.json

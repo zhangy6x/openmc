@@ -9,6 +9,7 @@
 *.pyc
 
 # Python distribution
+.settings/
 dist/
 openmc.egg-info/
 
@@ -42,11 +43,8 @@ results_error.dat
 inputs_error.dat
 results_test.dat
 
-# Test build files
-tests/build/
-tests/coverage/
-tests/memcheck/
-tests/ctestscript.run
+# Test
+.pytest_cache/
 
 # HDF5 files
 *.h5
@@ -62,18 +60,17 @@ src/install_manifest.txt
 scripts/nndc
 scripts/nndc_hdf5
 scripts/wmp
-scripts/multipole_lib.tar.gz
-scripts/ENDF-B-VII.1-*.tar.gz
-scripts/JEFF32-ACE-*.tar.gz
 scripts/JEFF32-ACE-*.zip
 scripts/TSLs.tar.gz
 scripts/jeff-3.2
 scripts/jeff-3.2-hdf5
-scripts/*.tar.xz
+scripts/*.tar.*
+scripts/G4EMLOW*/
 
 # Images
 *.ppm
 *.voxel
+*.vti
 
 # PyCharm project configuration files
 .idea
@@ -101,3 +98,11 @@ examples/jupyter/plots
 .cache/
 .tox/
 .python-version
+.coverage
+htmlcov
+
+#macOS
+*.DS_Store
+
+#Dynamic Library
+*.dylib

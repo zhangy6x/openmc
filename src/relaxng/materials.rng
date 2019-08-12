@@ -15,21 +15,42 @@
           <optional>
             <choice>
               <element name="name">
-                <data type="string">
-                  <param name="maxLength">52</param>
-                </data>
+                <data type="string"/>
               </element>
               <attribute name="name">
-                <data type="string">
-                  <param name="maxLength">52</param>
-                </data>
+                <data type="string"/>
               </attribute>
             </choice>
           </optional>
           <optional>
-            <element name="temperature">
-              <data type="double"/>
-            </element>
+            <choice>
+              <element name="depletable">
+                <data type="boolean"/>
+              </element>
+              <attribute name="depletable">
+                <data type="boolean"/>
+              </attribute>
+            </choice>
+          </optional>
+          <optional>
+            <choice>
+              <element name="volume">
+                <data type="double"/>
+              </element>
+              <attribute name="volume">
+                <data type="double"/>
+              </attribute>
+            </choice>
+          </optional>
+          <optional>
+            <choice>
+              <element name="temperature">
+                <data type="double"/>
+              </element>
+              <attribute name="temperature">
+                <data type="double"/>
+              </attribute>
+            </choice>
           </optional>
           <element name="density">
             <interleave>
@@ -68,22 +89,6 @@
                     <data type="string"/>
                   </attribute>
                 </choice>
-                <optional>
-                  <choice>
-                    <element name="scattering">
-                      <choice>
-                        <value>data</value>
-                        <value>iso-in-lab</value>
-                      </choice>
-                    </element>
-                    <attribute name="scattering">
-                      <choice>
-                        <value>data</value>
-                        <value>iso-in-lab</value>
-                      </choice>
-                    </attribute>
-                  </choice>
-                </optional>
                 <choice>
                   <choice>
                     <element name="ao">
@@ -105,6 +110,11 @@
               </interleave>
             </element>
           </zeroOrMore>
+          <optional>
+            <element name="isotropic">
+              <data type="string"/>
+            </element>
+          </optional>
           <zeroOrMore>
             <element name="macroscopic">
               <choice>
@@ -146,13 +156,6 @@
     </oneOrMore>
     <optional>
       <element name="cross_sections">
-        <data type="string">
-          <param name="maxLength">255</param>
-        </data>
-      </element>
-    </optional>
-    <optional>
-      <element name="multipole_library">
         <data type="string">
           <param name="maxLength">255</param>
         </data>

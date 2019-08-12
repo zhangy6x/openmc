@@ -1,11 +1,9 @@
-from __future__ import division, unicode_literals
-from collections import Iterable, Callable, MutableMapping
+from collections.abc import Iterable, Callable, MutableMapping
 from copy import deepcopy
 from numbers import Real, Integral
 from warnings import warn
 from io import StringIO
 
-from six import string_types
 import numpy as np
 
 import openmc.checkvalue as cv
@@ -53,7 +51,9 @@ REACTION_NAME = {1: '(n,total)', 2: '(n,elastic)', 4: '(n,level)',
                  189: '(n,nta)', 190: '(n,2n2p)', 191: '(n,p3He)',
                  192: '(n,d3He)', 193: '(n,3Hea)', 194: '(n,4n2p)',
                  195: '(n,4n2a)', 196: '(n,4npa)', 197: '(n,3p)',
-                 198: '(n,n3p)', 199: '(n,3n2pa)', 200: '(n,5n2p)', 444: '(n,damage)',
+                 198: '(n,n3p)', 199: '(n,3n2pa)', 200: '(n,5n2p)', 203: '(n,Xp)',
+                 204: '(n,Xd)', 205: '(n,Xt)', 206: '(n,X3He)', 207: '(n,Xa)',
+                 301: 'heating', 444: 'damage-energy',
                  649: '(n,pc)', 699: '(n,dc)', 749: '(n,tc)', 799: '(n,3Hec)',
                  849: '(n,ac)', 891: '(n,2nc)'}
 REACTION_NAME.update({i: '(n,n{})'.format(i - 50) for i in range(50, 91)})
@@ -578,14 +578,7 @@ def _get_photon_products_ace(ace, rx):
         # Determine corresponding reaction
         neutron_mt = photon_mts[i] // 1000
 
-        # Restrict to photons that match the requested MT. Note that if the
-        # photon is assigned to MT=18 but the file splits fission into
-        # MT=19,20,21,38, we assign the photon product to each of the individual
-        # reactions
-        if neutron_mt == 18:
-            if rx.mt not in (18, 19, 20, 21, 38):
-                continue
-        elif neutron_mt != rx.mt:
+        if neutron_mt != rx.mt:
             continue
 
         # Create photon product and assign to reactions
@@ -670,7 +663,7 @@ def _get_photon_products_endf(ev, rx):
 
     Returns
     -------
-    photons : list of openmc.Products
+    products : list of openmc.Products
         Photons produced from reaction with given MT
 
     """
@@ -787,6 +780,8 @@ class Reaction(EqualityMixin):
         Indicates whether scattering kinematics should be performed in the
         center-of-mass or laboratory reference frame.
         grid above the threshold value in barns.
+    redundant : bool
+        Indicates whether or not this is a redundant reaction
     mt : int
         The ENDF MT number for this reaction.
     q_value : float
@@ -805,6 +800,7 @@ class Reaction(EqualityMixin):
 
     def __init__(self, mt):
         self._center_of_mass = True
+        self._redundant = False
         self._q_value = 0.
         self._xs = {}
         self._products = []
@@ -821,6 +817,10 @@ class Reaction(EqualityMixin):
     @property
     def center_of_mass(self):
         return self._center_of_mass
+
+    @property
+    def redundant(self):
+        return self._redundant
 
     @property
     def q_value(self):
@@ -843,6 +843,11 @@ class Reaction(EqualityMixin):
         cv.check_type('center of mass', center_of_mass, (bool, np.bool_))
         self._center_of_mass = center_of_mass
 
+    @redundant.setter
+    def redundant(self, redundant):
+        cv.check_type('redundant', redundant, (bool, np.bool_))
+        self._redundant = redundant
+
     @q_value.setter
     def q_value(self, q_value):
         cv.check_type('Q value', q_value, Real)
@@ -863,7 +868,7 @@ class Reaction(EqualityMixin):
     def xs(self, xs):
         cv.check_type('reaction cross section dictionary', xs, MutableMapping)
         for key, value in xs.items():
-            cv.check_type('reaction cross section temperature', key, string_types)
+            cv.check_type('reaction cross section temperature', key, str)
             cv.check_type('reaction cross section', value, Callable)
         self._xs = xs
 
@@ -884,14 +889,12 @@ class Reaction(EqualityMixin):
             group.attrs['label'] = np.string_(self.mt)
         group.attrs['Q_value'] = self.q_value
         group.attrs['center_of_mass'] = 1 if self.center_of_mass else 0
+        group.attrs['redundant'] = 1 if self.redundant else 0
         for T in self.xs:
             Tgroup = group.create_group(T)
             if self.xs[T] is not None:
                 dset = Tgroup.create_dataset('xs', data=self.xs[T].y)
-                if hasattr(self.xs[T], '_threshold_idx'):
-                    threshold_idx = self.xs[T]._threshold_idx + 1
-                else:
-                    threshold_idx = 1
+                threshold_idx = getattr(self.xs[T], '_threshold_idx', 0)
                 dset.attrs['threshold_idx'] = threshold_idx
         for i, p in enumerate(self.products):
             pgroup = group.create_group('product_{}'.format(i))
@@ -920,6 +923,7 @@ class Reaction(EqualityMixin):
         rx = cls(mt)
         rx.q_value = group.attrs['Q_value']
         rx.center_of_mass = bool(group.attrs['center_of_mass'])
+        rx.redundant = bool(group.attrs.get('redundant', False))
 
         # Read cross section at each temperature
         for T, Tgroup in group.items():
@@ -931,8 +935,8 @@ class Reaction(EqualityMixin):
                             'Could not create reaction cross section for MT={} '
                             'at T={} because no corresponding energy grid '
                             'exists.'.format(mt, T))
-                    xs = Tgroup['xs'].value
-                    threshold_idx = Tgroup['xs'].attrs['threshold_idx'] - 1
+                    xs = Tgroup['xs'][()]
+                    threshold_idx = Tgroup['xs'].attrs['threshold_idx']
                     tabulated_xs = Tabulated1D(energy[T][threshold_idx:], xs)
                     tabulated_xs._threshold_idx = threshold_idx
                     rx.xs[T] = tabulated_xs
@@ -982,6 +986,10 @@ class Reaction(EqualityMixin):
 
             # Read reaction cross section
             xs = ace.xss[ace.jxs[7] + loc + 1:ace.jxs[7] + loc + 1 + n_energy]
+
+            # For damage energy production, convert to eV
+            if mt == 444:
+                xs *= EV_PER_MEV
 
             # Fix negatives -- known issue for Y89 in JEFF 3.2
             if np.any(xs < 0.0):
@@ -1095,7 +1103,7 @@ class Reaction(EqualityMixin):
         ev : openmc.data.endf.Evaluation
             ENDF evaluation
         mt : int
-            The MT value of the reaction to get angular distributions for
+            The MT value of the reaction to get data for
 
         Returns
         -------

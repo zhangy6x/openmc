@@ -15,16 +15,82 @@ generates ACE-format cross sections.
 
 """
 
-from __future__ import division, unicode_literals
-from os import SEEK_CUR
+from pathlib import PurePath
 import struct
 import sys
 
-from six import string_types
 import numpy as np
 
 from openmc.mixin import EqualityMixin
-from openmc.data.endf import ENDF_FLOAT_RE
+import openmc.checkvalue as cv
+from .data import ATOMIC_SYMBOL, gnd_name
+from .endf import ENDF_FLOAT_RE
+
+
+def get_metadata(zaid, metastable_scheme='nndc'):
+    """Return basic identifying data for a nuclide with a given ZAID.
+
+    Parameters
+    ----------
+    zaid : int
+        ZAID (1000*Z + A) obtained from a library
+    metastable_scheme : {'nndc', 'mcnp'}
+        Determine how ZAID identifiers are to be interpreted in the case of
+        a metastable nuclide. Because the normal ZAID (=1000*Z + A) does not
+        encode metastable information, different conventions are used among
+        different libraries. In MCNP libraries, the convention is to add 400
+        for a metastable nuclide except for Am242m, for which 95242 is
+        metastable and 95642 (or 1095242 in newer libraries) is the ground
+        state. For NNDC libraries, ZAID is given as 1000*Z + A + 100*m.
+
+    Returns
+    -------
+    name : str
+        Name of the table
+    element : str
+        The atomic symbol of the isotope in the table; e.g., Zr.
+    Z : int
+        Number of protons in the nucleus
+    mass_number : int
+        Number of nucleons in the nucleus
+    metastable : int
+        Metastable state of the nucleus. A value of zero indicates ground state.
+
+    """
+
+    cv.check_type('zaid', zaid, int)
+    cv.check_value('metastable_scheme', metastable_scheme, ['nndc', 'mcnp'])
+
+    Z = zaid // 1000
+    mass_number = zaid % 1000
+
+    if metastable_scheme == 'mcnp':
+        if zaid > 1000000:
+            # New SZA format
+            Z = Z % 1000
+            if zaid == 1095242:
+                metastable = 0
+            else:
+                metastable = zaid // 1000000
+        else:
+            if zaid == 95242:
+                metastable = 1
+            elif zaid == 95642:
+                metastable = 0
+            else:
+                metastable = 1 if mass_number > 300 else 0
+    elif metastable_scheme == 'nndc':
+        metastable = 1 if mass_number > 300 else 0
+
+    while mass_number > 3 * Z:
+        mass_number -= 100
+
+    # Determine name
+    element = ATOMIC_SYMBOL[Z]
+    name = gnd_name(Z, mass_number, metastable)
+
+    return (name, element, Z, mass_number, metastable)
+
 
 def ascii_to_binary(ascii_file, binary_file):
     """Convert an ACE file in ASCII format (type 1) to binary format (type 2).
@@ -39,7 +105,7 @@ def ascii_to_binary(ascii_file, binary_file):
     """
 
     # Open ASCII file
-    ascii = open(ascii_file, 'r')
+    ascii = open(str(ascii_file), 'r')
 
     # Set default record length
     record_length = 4096
@@ -49,7 +115,7 @@ def ascii_to_binary(ascii_file, binary_file):
     ascii.close()
 
     # Open binary file
-    binary = open(binary_file, 'wb')
+    binary = open(str(binary_file), 'wb')
 
     idx = 0
 
@@ -118,13 +184,12 @@ def get_table(filename, name=None):
 
     """
 
-    lib = Library(filename)
     if name is None:
-        return lib.tables[0]
+        return Library(filename).tables[0]
     else:
-        for table in lib.tables:
-            if table.name == name:
-                return table
+        lib = Library(filename, name)
+        if lib.tables:
+            return lib.tables[0]
         else:
             raise ValueError('Could not find ACE table with name: {}'
                              .format(name))
@@ -153,7 +218,7 @@ class Library(EqualityMixin):
     """
 
     def __init__(self, filename, table_names=None, verbose=False):
-        if isinstance(table_names, string_types):
+        if isinstance(table_names, str):
             table_names = [table_names]
         if table_names is not None:
             table_names = set(table_names)
@@ -161,6 +226,7 @@ class Library(EqualityMixin):
         self.tables = []
 
         # Determine whether file is ASCII or binary
+        filename = str(filename)
         try:
             fh = open(filename, 'rb')
             # Grab 10 lines of the library
@@ -172,7 +238,6 @@ class Library(EqualityMixin):
             # No exception so proceed with ASCII - reopen in non-binary
             fh.close()
             with open(filename, 'r') as fh:
-                fh.seek(0)
                 self._read_ascii(fh, table_names, verbose)
         except UnicodeDecodeError:
             fh.close()
@@ -310,26 +375,21 @@ class Library(EqualityMixin):
             nxs = np.fromstring(datastr, sep=' ', dtype=int)
 
             n_lines = (nxs[1] + 3)//4
-            n_bytes = len(lines[-1]) * (n_lines - 2) + 1
 
             # Ensure that we have more tables to read in
-            if (table_names is not None) and (table_names < tables_seen):
+            if (table_names is not None) and (table_names <= tables_seen):
                 break
             tables_seen.add(name)
 
-            # verify that we are suppossed to read this table in
+            # verify that we are supposed to read this table in
             if (table_names is not None) and (name not in table_names):
-                ace_file.seek(n_bytes, SEEK_CUR)
-                ace_file.readline()
+                for i in range(n_lines - 1):
+                    ace_file.readline()
                 lines = [ace_file.readline() for i in range(13)]
                 continue
 
-            # read and fix over-shoot
-            lines += ace_file.readlines(n_bytes)
-            if 12 + n_lines < len(lines):
-                goback = sum([len(line) for line in lines[12+n_lines:]])
-                lines = lines[:12+n_lines]
-                ace_file.seek(-goback, SEEK_CUR)
+            # Read lines corresponding to this table
+            lines += [ace_file.readline() for i in range(n_lines - 1)]
 
             if verbose:
                 kelvin = round(temperature * 1e6 / 8.617342e-5)
@@ -351,7 +411,7 @@ class Library(EqualityMixin):
             # after it). If it's too short, then we apply the ENDF float regular
             # expression. We don't do this by default because it's expensive!
             if xss.size != nxs[1] + 1:
-                datastr = ENDF_FLOAT_RE.sub(r'\1e\2', datastr)
+                datastr = ENDF_FLOAT_RE.sub(r'\1e\2\3', datastr)
                 xss = np.fromstring(datastr, sep=' ')
                 assert xss.size == nxs[1] + 1
 

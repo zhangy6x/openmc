@@ -1,4 +1,5 @@
-from collections import defaultdict, MutableSequence, Iterable
+from collections import defaultdict
+from collections.abc import MutableSequence, Iterable
 import io
 
 import numpy as np
@@ -14,6 +15,7 @@ try:
 except ImportError:
     _reconstruct = False
 import openmc.checkvalue as cv
+
 
 class Resonances(object):
     """Resolved and unresolved resonance data
@@ -89,14 +91,14 @@ class Resonances(object):
 
         # Determine whether discrete or continuous representation
         items = get_head_record(file_obj)
-        n_isotope = items[4] # Number of isotopes
+        n_isotope = items[4]  # Number of isotopes
 
         ranges = []
         for iso in range(n_isotope):
             items = get_cont_record(file_obj)
             abundance = items[1]
-            fission_widths = (items[3] == 1) # fission widths are given?
-            n_ranges = items[4] # number of resonance energy ranges
+            fission_widths = (items[3] == 1)  # fission widths are given?
+            n_ranges = items[4]  # number of resonance energy ranges
 
             for j in range(n_ranges):
                 items = get_cont_record(file_obj)
@@ -111,7 +113,7 @@ class Resonances(object):
                     # unresolved resonance region
                     erange = Unresolved.from_endf(file_obj, items, fission_widths)
 
-                #erange.material = self
+                # erange.material = self
                 ranges.append(erange)
 
         return cls(ranges)
@@ -160,6 +162,13 @@ class ResonanceRange(object):
 
         self._prepared = False
         self._parameter_matrix = {}
+
+    def __copy__(self):
+        cls = type(self)
+        new_copy = cls.__new__(cls)
+        new_copy.__dict__.update(self.__dict__)
+        new_copy._prepared = False
+        return new_copy
 
     @classmethod
     def from_endf(cls, ev, file_obj, items):
@@ -288,8 +297,8 @@ class MultiLevelBreitWigner(ResonanceRange):
     """
 
     def __init__(self, target_spin, energy_min, energy_max, channel, scattering):
-        super(MultiLevelBreitWigner, self).__init__(
-            target_spin, energy_min, energy_max, channel, scattering)
+        super().__init__(target_spin, energy_min, energy_max, channel,
+                         scattering)
         self.parameters = None
         self.q_value = {}
         self.atomic_weight_ratio = None
@@ -436,7 +445,7 @@ class MultiLevelBreitWigner(ResonanceRange):
         self._l_values = np.array(l_values)
         self._competitive = np.array(competitive)
         for l in l_values:
-            self._parameter_matrix[l] = df[df.L == l].as_matrix()
+            self._parameter_matrix[l] = df[df.L == l].values
 
         self._prepared = True
 
@@ -490,8 +499,8 @@ class SingleLevelBreitWigner(MultiLevelBreitWigner):
     """
 
     def __init__(self, target_spin, energy_min, energy_max, channel, scattering):
-        super(SingleLevelBreitWigner, self).__init__(
-            target_spin, energy_min, energy_max, channel, scattering)
+        super().__init__(target_spin, energy_min, energy_max, channel,
+                         scattering)
 
         # Set resonance reconstruction function
         if _reconstruct:
@@ -549,8 +558,8 @@ class ReichMoore(ResonanceRange):
     """
 
     def __init__(self, target_spin, energy_min, energy_max, channel, scattering):
-        super(ReichMoore, self).__init__(
-            target_spin, energy_min, energy_max, channel, scattering)
+        super().__init__(target_spin, energy_min, energy_max, channel,
+                         scattering)
         self.parameters = None
         self.angle_distribution = False
         self.num_l_convergence = 0
@@ -681,7 +690,7 @@ class ReichMoore(ResonanceRange):
         self._l_values = np.array(l_values)
         for (l, J) in lj_values:
             self._parameter_matrix[l, J] = df[(df.L == l) &
-                                              (abs(df.J) == J)].as_matrix()
+                                              (abs(df.J) == J)].values
 
         self._prepared = True
 
@@ -724,8 +733,7 @@ class RMatrixLimited(ResonanceRange):
     """
 
     def __init__(self, energy_min, energy_max, particle_pairs, spin_groups):
-        super(RMatrixLimited, self).__init__(0.0, energy_min, energy_max,
-                                             None, None)
+        super().__init__(0.0, energy_min, energy_max, None, None)
         self.reduced_width = False
         self.formalism = 3
         self.particle_pairs = particle_pairs
@@ -931,8 +939,7 @@ class Unresolved(ResonanceRange):
     """
 
     def __init__(self, target_spin, energy_min, energy_max, scatter):
-        super(Unresolved, self).__init__(
-            target_spin, energy_min, energy_max, None, scatter)
+        super().__init__(target_spin, energy_min, energy_max, None, scatter)
         self.energies = None
         self.parameters = None
         self.add_to_background = False

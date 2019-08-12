@@ -1,15 +1,14 @@
 from abc import ABCMeta, abstractmethod
-from collections import Iterable, OrderedDict, MutableSequence
+from collections import OrderedDict
+from collections.abc import Iterable, MutableSequence
 from copy import deepcopy
 
-from six import add_metaclass
 import numpy as np
 
 from openmc.checkvalue import check_type
 
 
-@add_metaclass(ABCMeta)
-class Region(object):
+class Region(metaclass=ABCMeta):
     """Region of space that can be assigned to a cell.
 
     Region is an abstract base class that is inherited by
@@ -39,10 +38,8 @@ class Region(object):
     def __eq__(self, other):
         if not isinstance(other, type(self)):
             return False
-        elif str(self) != str(other):
-            return False
         else:
-            return True
+            return str(self) == str(other)
 
     def __ne__(self, other):
         return not self == other
@@ -232,14 +229,28 @@ class Region(object):
         clone : openmc.Region
             The clone of this region
 
-        Raises
-        ------
-        NotImplementedError
-            This method is not implemented for the abstract region class.
+        """
+        pass
+
+    @abstractmethod
+    def translate(self, vector, memo=None):
+        """Translate region in given direction
+
+        Parameters
+        ----------
+        vector : iterable of float
+            Direction in which region should be translated
+        memo : dict or None
+            Dictionary used for memoization. This parameter is used internally
+            and should not be specified by the user.
+
+        Returns
+        -------
+        openmc.Region
+            Translated region
 
         """
-        raise NotImplementedError('The clone method is not implemented for '
-                                  'the abstract region class.')
+        pass
 
 
 class Intersection(Region, MutableSequence):
@@ -250,7 +261,7 @@ class Intersection(Region, MutableSequence):
     following example:
 
     >>> equator = openmc.ZPlane(z0=0.0)
-    >>> earth = openmc.Sphere(R=637.1e6)
+    >>> earth = openmc.Sphere(r=637.1e6)
     >>> northern_hemisphere = -earth & +equator
     >>> southern_hemisphere = -earth & -equator
     >>> type(northern_hemisphere)
@@ -355,6 +366,27 @@ class Intersection(Region, MutableSequence):
         clone[:] = [n.clone(memo) for n in self]
         return clone
 
+    def translate(self, vector, memo=None):
+        """Translate region in given direction
+
+        Parameters
+        ----------
+        vector : iterable of float
+            Direction in which region should be translated
+        memo : dict or None
+            Dictionary used for memoization. This parameter is used internally
+            and should not be specified by the user.
+
+        Returns
+        -------
+        openmc.Intersection
+            Translated region
+
+        """
+        if memo is None:
+            memo = {}
+        return type(self)(n.translate(vector, memo) for n in self)
+
 
 class Union(Region, MutableSequence):
     r"""Union of two or more regions.
@@ -364,7 +396,7 @@ class Union(Region, MutableSequence):
     example:
 
     >>> s1 = openmc.ZPlane(z0=0.0)
-    >>> s2 = openmc.Sphere(R=637.1e6)
+    >>> s2 = openmc.Sphere(r=637.1e6)
     >>> type(-s2 | +s1)
     <class 'openmc.region.Union'>
 
@@ -463,9 +495,30 @@ class Union(Region, MutableSequence):
         if memo is None:
             memo = {}
 
-        clone = copy.deepcopy(self)
+        clone = deepcopy(self)
         clone[:] = [n.clone(memo) for n in self]
         return clone
+
+    def translate(self, vector, memo=None):
+        """Translate region in given direction
+
+        Parameters
+        ----------
+        vector : iterable of float
+            Direction in which region should be translated
+        memo : dict or None
+            Dictionary used for memoization. This parameter is used internally
+            and should not be specified by the user.
+
+        Returns
+        -------
+        openmc.Union
+            Translated region
+
+        """
+        if memo is None:
+            memo = {}
+        return type(self)(n.translate(vector, memo) for n in self)
 
 
 class Complement(Region):
@@ -478,7 +531,7 @@ class Complement(Region):
     >>> xr = openmc.XPlane(x0=10.0)
     >>> yl = openmc.YPlane(y0=-10.0)
     >>> yr = openmc.YPlane(y0=10.0)
-    >>> inside_box = +xl & -xr & +yl & -yl
+    >>> inside_box = +xl & -xr & +yl & -yr
     >>> outside_box = ~inside_box
     >>> type(outside_box)
     <class 'openmc.region.Complement'>
@@ -584,6 +637,27 @@ class Complement(Region):
         if memo is None:
             memo = {}
 
-        clone = copy.deepcopy(self)
+        clone = deepcopy(self)
         clone.node = self.node.clone(memo)
         return clone
+
+    def translate(self, vector, memo=None):
+        """Translate region in given direction
+
+        Parameters
+        ----------
+        vector : iterable of float
+            Direction in which region should be translated
+        memo : dict or None
+            Dictionary used for memoization. This parameter is used internally
+            and should not be specified by the user.
+
+        Returns
+        -------
+        openmc.Complement
+            Translated region
+
+        """
+        if memo is None:
+            memo = {}
+        return type(self)(self.node.translate(vector, memo))

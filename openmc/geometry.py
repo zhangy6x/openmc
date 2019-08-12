@@ -1,11 +1,13 @@
-from collections import OrderedDict, Iterable
+from collections import OrderedDict, defaultdict
+from collections.abc import Iterable
 from copy import deepcopy
+from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from six import string_types
+import numpy as np
 
 import openmc
-from openmc.clean_xml import sort_xml_elements, clean_xml_indentation
+import openmc._xml as xml
 from openmc.checkvalue import check_type
 
 
@@ -14,8 +16,9 @@ class Geometry(object):
 
     Parameters
     ----------
-    root_universe : openmc.Universe, optional
-        Root universe which contains all others
+    root : openmc.Universe or Iterable of openmc.Cell, optional
+        Root universe which contains all others, or an iterable of cells that
+        should be used to create a root universe.
 
     Attributes
     ----------
@@ -27,11 +30,17 @@ class Geometry(object):
 
     """
 
-    def __init__(self, root_universe=None):
+    def __init__(self, root=None):
         self._root_universe = None
         self._offsets = {}
-        if root_universe is not None:
-            self.root_universe = root_universe
+        if root is not None:
+            if isinstance(root, openmc.Universe):
+                self.root_universe = root
+            else:
+                univ = openmc.Universe()
+                for cell in root:
+                    univ.add_cell(cell)
+                self._root_universe = univ
 
     @property
     def root_universe(self):
@@ -81,13 +90,113 @@ class Geometry(object):
         root_element = ET.Element("geometry")
         self.root_universe.create_xml_subelement(root_element)
 
+        # Sort the elements in the file
+        root_element[:] = sorted(root_element, key=lambda x: (
+            x.tag, int(x.get('id'))))
+
         # Clean the indentation in the file to be user-readable
-        sort_xml_elements(root_element)
-        clean_xml_indentation(root_element)
+        xml.clean_indentation(root_element)
+
+        # Check if path is a directory
+        p = Path(path)
+        if p.is_dir():
+            p /= 'geometry.xml'
 
         # Write the XML Tree to the geometry.xml file
         tree = ET.ElementTree(root_element)
-        tree.write(path, xml_declaration=True, encoding='utf-8', method="xml")
+        tree.write(str(p), xml_declaration=True, encoding='utf-8')
+
+    @classmethod
+    def from_xml(cls, path='geometry.xml', materials=None):
+        """Generate geometry from XML file
+
+        Parameters
+        ----------
+        path : str, optional
+            Path to geometry XML file
+        materials : openmc.Materials or None
+            Materials used to assign to cells. If None, an attempt is made to
+            generate it from the materials.xml file.
+
+        Returns
+        -------
+        openmc.Geometry
+            Geometry object
+
+        """
+        # Helper function for keeping a cache of Universe instances
+        universes = {}
+        def get_universe(univ_id):
+            if univ_id not in universes:
+                univ = openmc.Universe(univ_id)
+                universes[univ_id] = univ
+            return universes[univ_id]
+
+        tree = ET.parse(path)
+        root = tree.getroot()
+
+        # Get surfaces
+        surfaces = {}
+        periodic = {}
+        for surface in root.findall('surface'):
+            s = openmc.Surface.from_xml_element(surface)
+            surfaces[s.id] = s
+
+            # Check for periodic surface
+            other_id = xml.get_text(surface, 'periodic_surface_id')
+            if other_id is not None:
+                periodic[s.id] = int(other_id)
+
+        # Apply periodic surfaces
+        for s1, s2 in periodic.items():
+            surfaces[s1].periodic_surface = surfaces[s2]
+
+        # Dictionary that maps each universe to a list of cells/lattices that
+        # contain it (needed to determine which universe is the root)
+        child_of = defaultdict(list)
+
+        for elem in root.findall('lattice'):
+            lat = openmc.RectLattice.from_xml_element(elem, get_universe)
+            universes[lat.id] = lat
+            if lat.outer is not None:
+                child_of[lat.outer].append(lat)
+            for u in lat.universes.ravel():
+                child_of[u].append(lat)
+
+        for elem in root.findall('hex_lattice'):
+            lat = openmc.HexLattice.from_xml_element(elem, get_universe)
+            universes[lat.id] = lat
+            if lat.outer is not None:
+                child_of[lat.outer].append(lat)
+            if lat.ndim == 2:
+                for ring in lat.universes:
+                    for u in ring:
+                        child_of[u].append(lat)
+            else:
+                for axial_slice in lat.universes:
+                    for ring in axial_slice:
+                        for u in ring:
+                            child_of[u].append(lat)
+
+        # Create dictionary to easily look up materials
+        if materials is None:
+            filename = Path(path).parent / 'materials.xml'
+            materials = openmc.Materials.from_xml(str(filename))
+        mats = {str(m.id): m for m in materials}
+        mats['void'] = None
+
+        for elem in root.findall('cell'):
+            c = openmc.Cell.from_xml_element(elem, surfaces, mats, get_universe)
+            if c.fill_type in ('universe', 'lattice'):
+                child_of[c.fill].append(c)
+
+        # Determine which universe is the root by finding one which is not a
+        # child of any other object
+        for u in universes.values():
+            if not child_of[u]:
+                return cls(u)
+        else:
+            raise ValueError('Error determining root universe.')
 
     def find(self, point):
         """Find cells/universes/lattices which contain a given point
@@ -129,7 +238,7 @@ class Geometry(object):
         """
         # Make sure we are working with an iterable
         return_list = (isinstance(paths, Iterable) and
-                       not isinstance(paths, string_types))
+                       not isinstance(paths, str))
         path_list = paths if return_list else [paths]
 
         indices = []
@@ -162,7 +271,10 @@ class Geometry(object):
             Dictionary mapping cell IDs to :class:`openmc.Cell` instances
 
         """
-        return self.root_universe.get_all_cells()
+        if self.root_universe is not None:
+            return self.root_universe.get_all_cells()
+        else:
+            return []
 
     def get_all_universes(self):
         """Return all universes in the geometry.
@@ -246,7 +358,7 @@ class Geometry(object):
 
         for cell in self.get_all_cells().values():
             if cell.fill_type == 'lattice':
-                if cell.fill not in lattices:
+                if cell.fill.id not in lattices:
                     lattices[cell.fill.id] = cell.fill
 
         return lattices
@@ -303,9 +415,7 @@ class Geometry(object):
             elif not matching and name in material_name:
                 materials.add(material)
 
-        materials = list(materials)
-        materials.sort(key=lambda x: x.id)
-        return materials
+        return sorted(materials, key=lambda x: x.id)
 
     def get_cells_by_name(self, name, case_sensitive=False, matching=False):
         """Return a list of cells with matching names.
@@ -343,9 +453,7 @@ class Geometry(object):
             elif not matching and name in cell_name:
                 cells.add(cell)
 
-        cells = list(cells)
-        cells.sort(key=lambda x: x.id)
-        return cells
+        return sorted(cells, key=lambda x: x.id)
 
     def get_cells_by_fill_name(self, name, case_sensitive=False, matching=False):
         """Return a list of cells with fills with matching names.
@@ -390,9 +498,7 @@ class Geometry(object):
                 elif not matching and name in fill_name:
                     cells.add(cell)
 
-        cells = list(cells)
-        cells.sort(key=lambda x: x.id)
-        return cells
+        return sorted(cells, key=lambda x: x.id)
 
     def get_universes_by_name(self, name, case_sensitive=False, matching=False):
         """Return a list of universes with matching names.
@@ -430,9 +536,7 @@ class Geometry(object):
             elif not matching and name in universe_name:
                 universes.add(universe)
 
-        universes = list(universes)
-        universes.sort(key=lambda x: x.id)
-        return universes
+        return sorted(universes, key=lambda x: x.id)
 
     def get_lattices_by_name(self, name, case_sensitive=False, matching=False):
         """Return a list of lattices with matching names.
@@ -470,9 +574,7 @@ class Geometry(object):
             elif not matching and name in lattice_name:
                 lattices.add(lattice)
 
-        lattices = list(lattices)
-        lattices.sort(key=lambda x: x.id)
-        return lattices
+        return sorted(lattices, key=lambda x: x.id)
 
     def determine_paths(self, instances_only=False):
         """Determine paths through CSG tree for cells and materials.

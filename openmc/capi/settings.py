@@ -1,4 +1,5 @@
-from ctypes import c_int, c_int32, c_int64, c_double, c_char_p, POINTER
+from ctypes import (c_int, c_int32, c_int64, c_double, c_char_p, c_bool,
+                    POINTER)
 
 from . import _dll
 from .core import _DLLGlobal
@@ -11,16 +12,19 @@ _RUN_MODES = {1: 'fixed source',
               5: 'volume'}
 
 _dll.openmc_set_seed.argtypes = [c_int64]
-_dll.openmc_set_seed.restype = c_int
-_dll.openmc_set_seed.errcheck = _error_handler
+_dll.openmc_get_seed.restype = c_int64
 
 
 class _Settings(object):
     # Attributes that are accessed through a descriptor
     batches = _DLLGlobal(c_int32, 'n_batches')
+    cmfd_run = _DLLGlobal(c_bool, 'cmfd_run')
+    entropy_on = _DLLGlobal(c_bool, 'entropy_on')
     generations_per_batch = _DLLGlobal(c_int32, 'gen_per_batch')
     inactive = _DLLGlobal(c_int32, 'n_inactive')
     particles = _DLLGlobal(c_int64, 'n_particles')
+    restart_run = _DLLGlobal(c_bool, 'restart_run')
+    run_CE = _DLLGlobal(c_bool, 'run_CE')
     verbosity = _DLLGlobal(c_int, 'verbosity')
 
     @property
@@ -42,8 +46,13 @@ class _Settings(object):
             raise ValueError('Invalid run mode: {}'.format(mode))
 
     @property
+    def path_statepoint(self):
+        path = c_char_p.in_dll(_dll, 'path_statepoint').value
+        return path.decode()
+
+    @property
     def seed(self):
-        return c_int64.in_dll(_dll, 'seed').value
+        return _dll.openmc_get_seed()
 
     @seed.setter
     def seed(self, seed):

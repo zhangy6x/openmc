@@ -4,7 +4,7 @@
 Summary File Format
 ===================
 
-The current version of the summary file format is 5.0.
+The current version of the summary file format is 6.0.
 
 **/**
 
@@ -24,6 +24,8 @@ The current version of the summary file format is 5.0.
              - **n_universes** (*int*) -- Number of unique universes in the
                problem.
              - **n_lattices** (*int*) -- Number of lattices in the problem.
+             - **dagmc** (*int*) -- Indicates that a DAGMC geometry was used
+               if present.
 
 **/geometry/cells/cell <uid>/**
 
@@ -104,10 +106,22 @@ The current version of the summary file format is 5.0.
            - **atom_density** (*double[]*) -- Total atom density of the material
              in atom/b-cm.
            - **nuclides** (*char[][]*) -- Array of nuclides present in the
-             material, e.g., 'U235'.
+             material, e.g., 'U235'. This data set is only present if nuclides
+             are used.
            - **nuclide_densities** (*double[]*) -- Atom density of each nuclide.
+             This data set is only present if 'nuclides' data set is present.
+           - **macroscopics** (*char[][]*) -- Array of macroscopic data sets
+             present in the material. This dataset is only present if
+             macroscopic data sets are used in multi-group mode.
            - **sab_names** (*char[][]*) -- Names of
              S(:math:`\alpha,\beta`) tables assigned to the material.
+
+:Attributes: - **volume** (*double[]*) -- Volume of this material [cm^3]. Only
+               present if ``volume`` supplied
+             - **temperature** (*double[]*) -- Temperature of this material [K].
+               Only present in ``temperature`` supplied
+             - **depletable** (*int[]*) -- ``1`` if the material can be depleted,
+               ``0`` otherwise. Always present
 
 **/nuclides/**
 
@@ -115,6 +129,14 @@ The current version of the summary file format is 5.0.
 
 :Datasets: - **names** (*char[][]*) -- Names of nuclides.
            - **awrs** (*float[]*) -- Atomic weight ratio of each nuclide.
+
+**/macroscopics/**
+
+:Attributes:
+             - **n_macroscopics** (*int*) -- Number of macroscopic data sets
+               in the problem.
+
+:Datasets: - **names** (*char[][]*) -- Names of the macroscopic data sets.
 
 **/tallies/tally <uid>/**
 

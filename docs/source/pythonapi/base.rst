@@ -91,18 +91,6 @@ Many of the above classes are derived from several abstract classes:
    openmc.Region
    openmc.Lattice
 
-Two helper function are also available to create rectangular and hexagonal
-prisms defined by the intersection of four and six surface half-spaces,
-respectively.
-
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-   :template: myfunction.rst
-
-   openmc.get_hexagonal_prism
-   openmc.get_rectangular_prism
-
 .. _pythonapi_tallies:
 
 Constructing Tallies
@@ -121,6 +109,7 @@ Constructing Tallies
    openmc.CellbornFilter
    openmc.SurfaceFilter
    openmc.MeshFilter
+   openmc.MeshSurfaceFilter
    openmc.EnergyFilter
    openmc.EnergyoutFilter
    openmc.MuFilter
@@ -129,22 +118,18 @@ Constructing Tallies
    openmc.DistribcellFilter
    openmc.DelayedGroupFilter
    openmc.EnergyFunctionFilter
-   openmc.Mesh
+   openmc.LegendreFilter
+   openmc.SpatialLegendreFilter
+   openmc.SphericalHarmonicsFilter
+   openmc.ZernikeFilter
+   openmc.ZernikeRadialFilter
+   openmc.ParticleFilter
+   openmc.RegularMesh
+   openmc.RectilinearMesh
    openmc.Trigger
    openmc.TallyDerivative
    openmc.Tally
    openmc.Tallies
-
-Coarse Mesh Finite Difference Acceleration
-------------------------------------------
-
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-   :template: myclass.rst
-
-   openmc.CMFDMesh
-   openmc.CMFD
 
 Geometry Plotting
 -----------------
@@ -183,6 +168,23 @@ Post-processing
    openmc.StatePoint
    openmc.Summary
 
+The following classes and functions are used for functional expansion reconstruction.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+   :template: myclass.rst
+
+   openmc.ZernikeRadial
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+   :template: myfunction.rst
+
+   openmc.legendre_from_expcoef
+
+
 Various classes may be created when performing tally slicing and/or arithmetic:
 
 .. autosummary::
@@ -196,3 +198,25 @@ Various classes may be created when performing tally slicing and/or arithmetic:
    openmc.arithmetic.AggregateScore
    openmc.arithmetic.AggregateNuclide
    openmc.arithmetic.AggregateFilter
+
+Coarse Mesh Finite Difference Acceleration
+------------------------------------------
+
+CMFD is implemented in OpenMC and allows users to accelerate fission source
+convergence during inactive neutron batches. To use CMFD, the
+:class:`openmc.cmfd.CMFDRun` class executes OpenMC through the C API, solving
+the CMFD system between fission generations and modifying the source weights.
+Note that the :mod:`openmc.cmfd` module is not imported by default with the
+:mod:`openmc` namespace and needs to be imported explicitly.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+   :template: myclass.rst
+
+   openmc.cmfd.CMFDMesh
+   openmc.cmfd.CMFDRun
+
+At the minimum, a CMFD mesh needs to be specified in order to run CMFD. Once the
+mesh and other optional properties are set, a simulation can be run with CMFD
+turned on using :meth:`openmc.cmfd.CMFDRun.run`.

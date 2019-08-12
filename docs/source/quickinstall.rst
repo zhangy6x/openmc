@@ -44,20 +44,42 @@ Next, resynchronize the package index files:
 
 .. code-block:: sh
 
-    sudo apt-get update
+    sudo apt update
 
 Now OpenMC should be recognized within the repository and can be installed:
 
 .. code-block:: sh
 
-    sudo apt-get install openmc
+    sudo apt install openmc
 
 Binary packages from this PPA may exist for earlier versions of Ubuntu, but they
 are no longer supported.
 
 .. _Personal Package Archive: https://launchpad.net/~paulromano/+archive/staging
 .. _APT package manager: https://help.ubuntu.com/community/AptGet/Howto
-.. _HDF5: http://www.hdfgroup.org/HDF5/
+
+-------------------------------------------
+Installing on Linux/Mac/Windows with Docker
+-------------------------------------------
+
+OpenMC can be easily deployed using `Docker <https://www.docker.com/>`_ on any
+Windows, Mac or Linux system. With Docker running, execute the following
+command in the shell to download and run a `Docker image`_ with the most recent release of OpenMC from `DockerHub <https://hub.docker.com/>`_ called ``openmc/openmc:v0.10.0``:
+
+.. code-block:: sh
+
+    docker run openmc/openmc:v0.10.0
+
+This will take several minutes to run depending on your internet download speed. The command will place you in an interactive shell running in a `Docker container`_ with OpenMC installed.
+
+.. note:: The ``docker run`` command supports many `options`_ for spawning
+          containers -- including `mounting volumes`_ from the host
+	  filesystem -- which many users will find useful.
+
+.. _Docker image: https://docs.docker.com/engine/reference/commandline/images/
+.. _Docker container: https://www.docker.com/resources/what-container
+.. _options: https://docs.docker.com/engine/reference/commandline/run/
+.. _mounting volumes: https://docs.docker.com/storage/volumes/
 
 ---------------------------------------
 Installing from Source on Ubuntu 15.04+
@@ -69,29 +91,25 @@ installed directly from the package manager.
 
 .. code-block:: sh
 
-    sudo apt-get install gfortran
-    sudo apt-get install cmake
-    sudo apt-get install libhdf5-dev
+    sudo apt install g++ cmake libhdf5-dev
 
 After the packages have been installed, follow the instructions below for
 building and installing OpenMC from source.
-
-.. note:: Before Ubuntu 15.04, the HDF5 package included in the Ubuntu Package
-          archive was not built with support for the Fortran 2003 HDF5
-          interface, which is needed by OpenMC. If you are using Ubuntu 14.10 or
-          before you will need to build HDF5 from source.
 
 -------------------------------------------
 Installing from Source on Linux or Mac OS X
 -------------------------------------------
 
-All OpenMC source code is hosted on GitHub_. If you have git_, the gfortran_
-compiler, CMake_, and HDF5_ installed, you can download and install OpenMC be
-entering the following commands in a terminal:
+All OpenMC source code is hosted on `GitHub
+<https://github.com/openmc-dev/openmc>`_. If you have `git
+<https://git-scm.com>`_, the `gcc <https://gcc.gnu.org/>`_ compiler suite,
+`CMake <http://www.cmake.org>`_, and `HDF5 <https://www.hdfgroup.org/HDF5/>`_
+installed, you can download and install OpenMC be entering the following
+commands in a terminal:
 
 .. code-block:: sh
 
-    git clone https://github.com/mit-crpg/openmc.git
+    git clone https://github.com/openmc-dev/openmc.git
     cd openmc
     mkdir build && cd build
     cmake ..
@@ -106,11 +124,15 @@ should specify an installation directory where you have write access, e.g.
 
     cmake -DCMAKE_INSTALL_PREFIX=$HOME/.local ..
 
+The :mod:`openmc` Python package must be installed separately. The easiest way
+to install it is using `pip <https://pip.pypa.io/en/stable/>`_, which is
+included by default in Python 2.7 and Python 3.4+. From the root directory of
+the OpenMC distribution/repository, run:
+
+.. code-block:: sh
+
+    pip install .
+
 If you want to build a parallel version of OpenMC (using OpenMP or MPI),
 directions can be found in the :ref:`detailed installation instructions
 <usersguide_build>`.
-
-.. _GitHub: https://github.com/mit-crpg/openmc
-.. _git: http://git-scm.com
-.. _gfortran: http://gcc.gnu.org/wiki/GFortran
-.. _CMake: http://www.cmake.org

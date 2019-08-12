@@ -12,14 +12,13 @@ Input Files
 
 .. toctree::
    :numbered:
-   :maxdepth: 2
+   :maxdepth: 1
 
    geometry
    materials
    settings
    tallies
    plots
-   cmfd
 
 ----------
 Data Files
@@ -27,13 +26,13 @@ Data Files
 
 .. toctree::
    :numbered:
-   :maxdepth: 2
+   :maxdepth: 1
 
    cross_sections
+   depletion_chain
    nuclear_data
    mgxs_library
    data_wmp
-   fission_energy
 
 ------------
 Output Files
@@ -41,11 +40,12 @@ Output Files
 
 .. toctree::
    :numbered:
-   :maxdepth: 2
+   :maxdepth: 1
 
    statepoint
    source
    summary
+   depletion_results
    particle_restart
    track
    voxel

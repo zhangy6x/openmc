@@ -17,8 +17,6 @@ The current version of the statepoint file format is 17.0.
              - **date_and_time** (*char[]*) -- Date and time the summary was
                written.
              - **path** (*char[]*) -- Path to directory containing input files.
-             - **cmfd_on** (*int*) -- Flag indicating whether CMFD is on (1) or
-               off (0).
              - **tallies_present** (*int*) -- Flag indicating whether tallies
                are present (1) or not (0).
              - **source_present** (*int*) -- Flag indicating whether the source
@@ -58,18 +56,6 @@ The current version of the statepoint file format is 17.0.
              position, direction, energy, energy group, and delayed_group of the
              source particle, respectively. Only present when `run_mode` is
              'eigenvalue'.
-
-**/cmfd/**
-
-:Datasets: - **indices** (*int[4]*) -- Indices for cmfd mesh (i,j,k,g)
-           - **k_cmfd** (*double[]*) -- CMFD eigenvalues
-           - **cmfd_src** (*double[][][][]*) -- CMFD fission source
-           - **cmfd_entropy** (*double[]*) -- CMFD estimate of Shannon entropy
-           - **cmfd_balance** (*double[]*) -- RMS of the residual neutron
-             balance equation on CMFD mesh
-           - **cmfd_dominance** (*double[]*) -- CMFD estimate of dominance ratio
-           - **cmfd_srccmp** (*double[]*) -- RMS comparison of difference
-             between OpenMC and CMFD fission source
 
 **/tallies/**
 
@@ -133,15 +119,8 @@ The current version of the statepoint file format is 17.0.
            - **derivative** (*int*) -- ID of the derivative applied to the
              tally.
            - **n_score_bins** (*int*) -- Number of scoring bins for a single
-             nuclide. In general, this can be greater than the number of
-             user-specified scores since each score might have multiple scoring
-             bins, e.g., scatter-PN.
+             nuclide.
            - **score_bins** (*char[][]*) -- Values of specified scores.
-           - **n_user_scores** (*int*) -- Number of scores without accounting
-             for those added by expansions, e.g. scatter-PN.
-           - **moment_orders** (*char[][]*) -- Tallying moment orders for
-             Legendre and spherical harmonic tally expansions (e.g., 'P2',
-             'Y1,2', etc.).
            - **results** (*double[][][2]*) -- Accumulated sum and sum-of-squares
              for each bin of the i-th tally. The first dimension represents
              combinations of filter bins, the second dimensions represents
@@ -173,9 +152,3 @@ All values are given in seconds and are measured on the master process.
              source sites between processes for load balancing.
            - **accumulating tallies** (*double*) -- Time spent communicating
              tally results and evaluating their statistics.
-           - **CMFD** (*double*) -- Time spent evaluating CMFD.
-           - **CMFD building matrices** (*double*) -- Time spent buliding CMFD
-             matrices.
-           - **CMFD solving matrices** (*double*) -- Time spent solving CMFD
-             matrices.
-           - **total** (*double*) -- Total time spent in the program.

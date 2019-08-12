@@ -1,10 +1,9 @@
-from __future__ import print_function
 import argparse
 from collections import namedtuple
 from io import StringIO
 import os
 import shutil
-from subprocess import Popen, PIPE, STDOUT
+from subprocess import Popen, PIPE, STDOUT, CalledProcessError
 import sys
 import tempfile
 
@@ -73,8 +72,13 @@ broadr / %%%%%%%%%%%%%%%%%%%%%%% Doppler broaden XS %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 _TEMPLATE_HEATR = """
 heatr / %%%%%%%%%%%%%%%%%%%%%%%%% Add heating kerma %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 {nendf} {nheatr_in} {nheatr} /
-{mat} 3 /
-302 318 402 /
+{mat} 4 /
+302 318 402 444 /
+"""
+
+_TEMPLATE_GASPR = """
+gaspr / %%%%%%%%%%%%%%%%%%%%%%%%% Add gas production %%%%%%%%%%%%%%%%%%%%%%%%%%%
+{nendf} {ngaspr_in} {ngaspr} /
 """
 
 _TEMPLATE_PURR = """
@@ -116,7 +120,7 @@ acer / %%%%%%%%%%%%%%%%%%%%%%%% Write out in ACE format %%%%%%%%%%%%%%%%%%%%%%%%
 '{library}: {zsymam_thermal} processed by NJOY'/
 {mat} {temperature} '{data.name}' /
 {zaids} /
-222 64 {mt_elastic} {elastic_type} {data.nmix} {energy_max} 2/
+222 64 {mt_elastic} {elastic_type} {data.nmix} {energy_max} {iwt}/
 """
 
 
@@ -139,25 +143,22 @@ def run(commands, tapein, tapeout, input_filename=None, stdout=False,
     njoy_exec : str, optional
         Path to NJOY executable
 
-    Returns
-    -------
-    int
-        Return code of NJOY process
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If the NJOY process returns with a non-zero status
 
     """
 
     if input_filename is not None:
-        with open(input_filename, 'w') as f:
+        with open(str(input_filename), 'w') as f:
             f.write(commands)
 
-    # Create temporary directory -- it would be preferable to use
-    # TemporaryDirectory(), but it is only available in Python 3.2
-    tmpdir = tempfile.mkdtemp()
-    try:
+    with tempfile.TemporaryDirectory() as tmpdir:
         # Copy evaluations to appropriates 'tapes'
         for tape_num, filename in tapein.items():
             tmpfilename = os.path.join(tmpdir, 'tape{}'.format(tape_num))
-            shutil.copy(filename, tmpfilename)
+            shutil.copy(str(filename), tmpfilename)
 
         # Start up NJOY process
         njoy = Popen([njoy_exec], cwd=tmpdir, stdin=PIPE, stdout=PIPE,
@@ -165,29 +166,32 @@ def run(commands, tapein, tapeout, input_filename=None, stdout=False,
 
         njoy.stdin.write(commands)
         njoy.stdin.flush()
+        lines = []
         while True:
             # If process is finished, break loop
             line = njoy.stdout.readline()
             if not line and njoy.poll() is not None:
                 break
 
+            lines.append(line)
             if stdout:
                 # If user requested output, print to screen
                 print(line, end='')
+
+        # Check for error
+        if njoy.returncode != 0:
+            raise CalledProcessError(njoy.returncode, njoy_exec,
+                                     ''.join(lines))
 
         # Copy output files back to original directory
         for tape_num, filename in tapeout.items():
             tmpfilename = os.path.join(tmpdir, 'tape{}'.format(tape_num))
             if os.path.isfile(tmpfilename):
-                shutil.move(tmpfilename, filename)
-    finally:
-        shutil.rmtree(tmpdir)
-
-    return njoy.returncode
+                shutil.move(tmpfilename, str(filename))
 
 
 def make_pendf(filename, pendf='pendf', error=0.001, stdout=False):
-    """Generate ACE file from an ENDF file
+    """Generate pointwise ENDF file from an ENDF file
 
     Parameters
     ----------
@@ -200,20 +204,20 @@ def make_pendf(filename, pendf='pendf', error=0.001, stdout=False):
     stdout : bool
         Whether to display NJOY standard output
 
-    Returns
-    -------
-    int
-        Return code of NJOY process
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If the NJOY process returns with a non-zero status
 
     """
 
-    return make_ace(filename, pendf=pendf, error=error, broadr=False,
-                    heatr=False, purr=False, acer=False, stdout=stdout)
+    make_ace(filename, pendf=pendf, error=error, broadr=False,
+             heatr=False, purr=False, acer=False, stdout=stdout)
 
 
 def make_ace(filename, temperatures=None, ace='ace', xsdir='xsdir', pendf=None,
-             error=0.001, broadr=True, heatr=True, purr=True, acer=True,
-             **kwargs):
+             error=0.001, broadr=True, heatr=True, gaspr=True, purr=True,
+             acer=True, evaluation=None, **kwargs):
     """Generate incident neutron ACE file from an ENDF file
 
     Parameters
@@ -235,20 +239,25 @@ def make_ace(filename, temperatures=None, ace='ace', xsdir='xsdir', pendf=None,
         Indicating whether to Doppler broaden XS when running NJOY
     heatr : bool, optional
         Indicating whether to add heating kerma when running NJOY
+    gaspr : bool, optional
+        Indicating whether to add gas production data when running NJOY
     purr : bool, optional
         Indicating whether to add probability table when running NJOY
     acer : bool, optional
-        Indicating whether to generate ACE file when running NJOY 
+        Indicating whether to generate ACE file when running NJOY
+    evaluation : openmc.data.endf.Evaluation, optional
+        If the ENDF file contains multiple material evaluations, this argument
+        indicates which evaluation should be used.
     **kwargs
         Keyword arguments passed to :func:`openmc.data.njoy.run`
 
-    Returns
-    -------
-    int
-        Return code of NJOY process
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If the NJOY process returns with a non-zero status
 
     """
-    ev = endf.Evaluation(filename)
+    ev = evaluation if evaluation is not None else endf.Evaluation(filename)
     mat = ev.material
     zsymam = ev.target['zsymam']
 
@@ -285,7 +294,14 @@ def make_ace(filename, temperatures=None, ace='ace', xsdir='xsdir', pendf=None,
         nheatr = nheatr_in + 1
         commands += _TEMPLATE_HEATR
         nlast = nheatr
-      
+
+    # gaspr
+    if gaspr:
+        ngaspr_in = nlast
+        ngaspr = ngaspr_in + 1
+        commands += _TEMPLATE_GASPR
+        nlast = ngaspr
+
     # purr
     if purr:
         npurr_in = nlast
@@ -310,9 +326,9 @@ def make_ace(filename, temperatures=None, ace='ace', xsdir='xsdir', pendf=None,
             tapeout[nace] = fname.format(ace, temperature)
             tapeout[ndir] = fname.format(xsdir, temperature)
     commands += 'stop\n'
-    retcode = run(commands, tapein, tapeout, **kwargs)
+    run(commands, tapein, tapeout, **kwargs)
 
-    if acer and retcode == 0:
+    if acer:
         with open(ace, 'w') as ace_file, open(xsdir, 'w') as xsdir_file:
             for temperature in temperatures:
                 # Get contents of ACE file
@@ -337,11 +353,10 @@ def make_ace(filename, temperatures=None, ace='ace', xsdir='xsdir', pendf=None,
             os.remove(fname.format(ace, temperature))
             os.remove(fname.format(xsdir, temperature))
 
-    return retcode
 
-
-def make_ace_thermal(filename, filename_thermal, temperatures=None,                     
-                     ace='ace', xsdir='xsdir', error=0.001, **kwargs):
+def make_ace_thermal(filename, filename_thermal, temperatures=None,
+                     ace='ace', xsdir='xsdir', error=0.001, iwt=2,
+                     evaluation=None, evaluation_thermal=None, **kwargs):
     """Generate thermal scattering ACE file from ENDF files
 
     Parameters
@@ -359,20 +374,29 @@ def make_ace_thermal(filename, filename_thermal, temperatures=None,
         Path of xsdir file to write
     error : float, optional
         Fractional error tolerance for NJOY processing
+    iwt : int
+        `iwt` parameter used in NJOR/ACER card 9
+    evaluation : openmc.data.endf.Evaluation, optional
+        If the ENDF neutron sublibrary file contains multiple material
+        evaluations, this argument indicates which evaluation to use.
+    evaluation_thermal : openmc.data.endf.Evaluation, optional
+        If the ENDF thermal scattering sublibrary file contains multiple
+        material evaluations, this argument indicates which evaluation to use.
     **kwargs
         Keyword arguments passed to :func:`openmc.data.njoy.run`
 
-    Returns
-    -------
-    int
-        Return code of NJOY process
+    Raises
+    ------
+    subprocess.CalledProcessError
+        If the NJOY process returns with a non-zero status
 
     """
-    ev = endf.Evaluation(filename)
+    ev = evaluation if evaluation is not None else endf.Evaluation(filename)
     mat = ev.material
     zsymam = ev.target['zsymam']
 
-    ev_thermal = endf.Evaluation(filename_thermal)
+    ev_thermal = (evaluation_thermal if evaluation_thermal is not None
+                  else endf.Evaluation(filename_thermal))
     mat_thermal = ev_thermal.material
     zsymam_thermal = ev_thermal.target['zsymam']
 
@@ -425,7 +449,7 @@ def make_ace_thermal(filename, filename_thermal, temperatures=None,
     commands = ""
 
     nendf, nthermal_endf, npendf = 20, 21, 22
-    tapein = {nendf: filename, nthermal_endf:filename_thermal}
+    tapein = {nendf: filename, nthermal_endf: filename_thermal}
     tapeout = {}
 
     # reconr
@@ -461,21 +485,18 @@ def make_ace_thermal(filename, filename_thermal, temperatures=None,
         tapeout[nace] = fname.format(ace, temperature)
         tapeout[ndir] = fname.format(xsdir, temperature)
     commands += 'stop\n'
-    retcode = run(commands, tapein, tapeout, **kwargs)
+    run(commands, tapein, tapeout, **kwargs)
 
-    if retcode == 0:
-        with open(ace, 'w') as ace_file, open(xsdir, 'w') as xsdir_file:
-            # Concatenate ACE and xsdir files together
-            for temperature in temperatures:
-                text = open(fname.format(ace, temperature), 'r').read()
-                ace_file.write(text)
-
-                text = open(fname.format(xsdir, temperature), 'r').read()
-                xsdir_file.write(text)
-
-        # Remove ACE/xsdir files for each temperature
+    with open(ace, 'w') as ace_file, open(xsdir, 'w') as xsdir_file:
+        # Concatenate ACE and xsdir files together
         for temperature in temperatures:
-            os.remove(fname.format(ace, temperature))
-            os.remove(fname.format(xsdir, temperature))
+            text = open(fname.format(ace, temperature), 'r').read()
+            ace_file.write(text)
 
-    return retcode
+            text = open(fname.format(xsdir, temperature), 'r').read()
+            xsdir_file.write(text)
+
+    # Remove ACE/xsdir files for each temperature
+    for temperature in temperatures:
+        os.remove(fname.format(ace, temperature))
+        os.remove(fname.format(xsdir, temperature))

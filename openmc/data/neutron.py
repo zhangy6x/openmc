@@ -1,8 +1,7 @@
-from __future__ import division, unicode_literals
 import sys
-from collections import OrderedDict, Iterable, Mapping, MutableMapping
+from collections import OrderedDict
+from collections.abc import Iterable, Mapping, MutableMapping
 from io import StringIO
-from itertools import chain
 from math import log10
 from numbers import Integral, Real
 import os
@@ -10,12 +9,11 @@ import shutil
 import tempfile
 from warnings import warn
 
-from six import string_types
 import numpy as np
 import h5py
 
 from . import HDF5_VERSION, HDF5_VERSION_MAJOR
-from .ace import Library, Table, get_table
+from .ace import Library, Table, get_table, get_metadata
 from .data import ATOMIC_SYMBOL, K_BOLTZMANN, EV_PER_MEV
 from .endf import Evaluation, SUM_RULES, get_head_record, get_tab1_record
 from .fission_energy import FissionEnergyRelease
@@ -25,6 +23,7 @@ from .njoy import make_ace
 from .product import Product
 from .reaction import Reaction, _get_photon_products_ace
 from . import resonance as res
+from . import resonance_covariance as res_cov
 from .urr import ProbabilityTables
 import openmc.checkvalue as cv
 from openmc.mixin import EqualityMixin
@@ -34,90 +33,26 @@ from openmc.mixin import EqualityMixin
 _RESONANCE_ENERGY_GRID = np.logspace(-3, 3, 61)
 
 
-def _get_metadata(zaid, metastable_scheme='nndc'):
-    """Return basic identifying data for a nuclide with a given ZAID.
-
-    Parameters
-    ----------
-    zaid : int
-        ZAID (1000*Z + A) obtained from a library
-    metastable_scheme : {'nndc', 'mcnp'}
-        Determine how ZAID identifiers are to be interpreted in the case of
-        a metastable nuclide. Because the normal ZAID (=1000*Z + A) does not
-        encode metastable information, different conventions are used among
-        different libraries. In MCNP libraries, the convention is to add 400
-        for a metastable nuclide except for Am242m, for which 95242 is
-        metastable and 95642 (or 1095242 in newer libraries) is the ground
-        state. For NNDC libraries, ZAID is given as 1000*Z + A + 100*m.
-
-    Returns
-    -------
-    name : str
-        Name of the table
-    element : str
-        The atomic symbol of the isotope in the table; e.g., Zr.
-    Z : int
-        Number of protons in the nucleus
-    mass_number : int
-        Number of nucleons in the nucleus
-    metastable : int
-        Metastable state of the nucleus. A value of zero indicates ground state.
-
-    """
-
-    cv.check_type('zaid', zaid, int)
-    cv.check_value('metastable_scheme', metastable_scheme, ['nndc', 'mcnp'])
-
-    Z = zaid // 1000
-    mass_number = zaid % 1000
-
-    if metastable_scheme == 'mcnp':
-        if zaid > 1000000:
-            # New SZA format
-            Z = Z % 1000
-            if zaid == 1095242:
-                metastable = 0
-            else:
-                metastable = zaid // 1000000
-        else:
-            if zaid == 95242:
-                metastable = 1
-            elif zaid == 95642:
-                metastable = 0
-            else:
-                metastable = 1 if mass_number > 300 else 0
-    elif metastable_scheme == 'nndc':
-        metastable = 1 if mass_number > 300 else 0
-
-    while mass_number > 3 * Z:
-        mass_number -= 100
-
-    # Determine name
-    element = ATOMIC_SYMBOL[Z]
-    name = '{}{}'.format(element, mass_number)
-    if metastable > 0:
-        name += '_m{}'.format(metastable)
-
-    return (name, element, Z, mass_number, metastable)
-
-
 class IncidentNeutron(EqualityMixin):
     """Continuous-energy neutron interaction data.
 
-    Instances of this class are not normally instantiated by the user but rather
-    created using the factory methods :meth:`IncidentNeutron.from_hdf5` and
-    :meth:`IncidentNeutron.from_ace`.
+    This class stores data derived from an ENDF-6 format neutron interaction
+    sublibrary. Instances of this class are not normally instantiated by the
+    user but rather created using the factory methods
+    :meth:`IncidentNeutron.from_hdf5`, :meth:`IncidentNeutron.from_ace`, and
+    :meth:`IncidentNeutron.from_endf`.
 
     Parameters
     ----------
     name : str
         Name of the nuclide using the GND naming convention
     atomic_number : int
-        Number of protons in the nucleus
+        Number of protons in the target nucleus
     mass_number : int
-        Number of nucleons in the nucleus
+        Number of nucleons in the target nucleus
     metastable : int
-        Metastable state of the nucleus. A value of zero indicates ground state.
+        Metastable state of the target nucleus. A value of zero indicates ground
+        state.
     atomic_weight_ratio : float
         Atomic mass ratio of the target nuclide.
     kTs : Iterable of float
@@ -127,22 +62,19 @@ class IncidentNeutron(EqualityMixin):
     Attributes
     ----------
     atomic_number : int
-        Number of protons in the nucleus
+        Number of protons in the target nucleus
     atomic_symbol : str
         Atomic symbol of the nuclide, e.g., 'Zr'
     atomic_weight_ratio : float
         Atomic weight ratio of the target nuclide.
-    energy : dict of numpy.ndarray
-        The energy values (eV) at which reaction cross-sections are tabulated.
-        They keys of the dict are the temperature string ('294K') for each
-        set of energies
     fission_energy : None or openmc.data.FissionEnergyRelease
         The energy released by fission, tabulated by component (e.g. prompt
         neutrons or beta particles) and dependent on incident neutron energy
     mass_number : int
-        Number of nucleons in the nucleus
+        Number of nucleons in the target nucleus
     metastable : int
-        Metastable state of the nucleus. A value of zero indicates ground state.
+        Metastable state of the target nucleus. A value of zero indicates ground
+        state.
     name : str
         Name of the nuclide using the GND naming convention
     reactions : collections.OrderedDict
@@ -151,9 +83,8 @@ class IncidentNeutron(EqualityMixin):
         and the values are Reaction objects.
     resonances : openmc.data.Resonances or None
         Resonance parameters
-    summed_reactions : collections.OrderedDict
-        Contains summed cross sections, e.g., the total cross section. The keys
-        are the MT values and the values are Reaction objects.
+    resonance_covariance : openmc.data.ResonanceCovariance or None
+        Covariance for resonance parameters
     temperatures : list of str
         List of string representations the temperatures of the target nuclide
         in the data set.  The temperatures are strings of the temperature,
@@ -178,18 +109,15 @@ class IncidentNeutron(EqualityMixin):
         self.energy = {}
         self._fission_energy = None
         self.reactions = OrderedDict()
-        self.summed_reactions = OrderedDict()
         self._urr = {}
         self._resonances = None
 
     def __contains__(self, mt):
-        return mt in self.reactions or mt in self.summed_reactions
+        return mt in self.reactions
 
     def __getitem__(self, mt):
         if mt in self.reactions:
             return self.reactions[mt]
-        elif mt in self.summed_reactions:
-            return self.summed_reactions[mt]
         else:
             raise KeyError('No reaction with MT={}.'.format(mt))
 
@@ -232,8 +160,8 @@ class IncidentNeutron(EqualityMixin):
         return self._resonances
 
     @property
-    def summed_reactions(self):
-        return self._summed_reactions
+    def resonance_covariance(self):
+        return self._resonance_covariance
 
     @property
     def urr(self):
@@ -245,7 +173,7 @@ class IncidentNeutron(EqualityMixin):
 
     @name.setter
     def name(self, name):
-        cv.check_type('name', name, string_types)
+        cv.check_type('name', name, str)
         self._name = name
 
     @property
@@ -292,16 +220,17 @@ class IncidentNeutron(EqualityMixin):
         cv.check_type('resonances', resonances, res.Resonances)
         self._resonances = resonances
 
-    @summed_reactions.setter
-    def summed_reactions(self, summed_reactions):
-        cv.check_type('summed reactions', summed_reactions, Mapping)
-        self._summed_reactions = summed_reactions
+    @resonance_covariance.setter
+    def resonance_covariance(self, resonance_covariance):
+        cv.check_type('resonance covariance', resonance_covariance,
+                      res_cov.ResonanceCovariances)
+        self._resonance_covariance = resonance_covariance
 
     @urr.setter
     def urr(self, urr):
         cv.check_type('probability table dictionary', urr, MutableMapping)
         for key, value in urr:
-            cv.check_type('probability table temperature', key, string_types)
+            cv.check_type('probability table temperature', key, str)
             cv.check_type('probability tables', value, ProbabilityTables)
         self._urr = urr
 
@@ -342,8 +271,8 @@ class IncidentNeutron(EqualityMixin):
         # Add energy grid
         self.energy[strT] = data.energy[strT]
 
-        # Add normal and summed reactions
-        for mt in chain(data.reactions, data.summed_reactions):
+        # Add normal and redundant reactions
+        for mt in data.reactions:
             if mt in self:
                 self[mt].xs[strT] = data[mt].xs[strT]
             else:
@@ -447,7 +376,7 @@ class IncidentNeutron(EqualityMixin):
         self[2].xs['0K'] = Tabulated1D(x, y)
 
     def get_reaction_components(self, mt):
-        """Determine what reactions make up summed reaction.
+        """Determine what reactions make up redundant reaction.
 
         Parameters
         ----------
@@ -457,28 +386,20 @@ class IncidentNeutron(EqualityMixin):
         Returns
         -------
         mts : list of int
-            ENDF MT numbers of reactions that make up the summed reaction and
+            ENDF MT numbers of reactions that make up the redundant reaction and
             have cross sections provided.
 
         """
-        if mt in self.reactions:
-            return [mt]
-        elif mt in SUM_RULES:
-            mts = SUM_RULES[mt]
-        complete = False
-        while not complete:
-            new_mts = []
-            complete = True
-            for i, mt_i in enumerate(mts):
-                if mt_i in self.reactions:
-                    new_mts.append(mt_i)
-                elif mt_i in SUM_RULES:
-                    new_mts += SUM_RULES[mt_i]
-                    complete = False
-            mts = new_mts
-        return mts
+        mts = []
+        if mt in SUM_RULES:
+            for mt_i in SUM_RULES[mt]:
+                mts += self.get_reaction_components(mt_i)
+        if mts:
+            return mts
+        else:
+            return [mt] if mt in self else []
 
-    def export_to_hdf5(self, path, mode='a'):
+    def export_to_hdf5(self, path, mode='a', libver='earliest'):
         """Export incident neutron data to an HDF5 file.
 
         Parameters
@@ -488,6 +409,9 @@ class IncidentNeutron(EqualityMixin):
         mode : {'r', r+', 'w', 'x', 'a'}
             Mode that is used to open the HDF5 file. This is the second argument
             to the :class:`h5py.File` constructor.
+        libver : {'earliest', 'latest'}
+            Compatibility mode for the HDF5 file. 'latest' will produce files
+            that are less backwards compatible but have performance benefits.
 
         """
         # If data come from ENDF, don't allow exporting to HDF5
@@ -496,7 +420,8 @@ class IncidentNeutron(EqualityMixin):
                                       'originated from an ENDF file.')
 
         # Open file and write version
-        f = h5py.File(path, mode, libver='latest')
+        f = h5py.File(str(path), mode, libver=libver)
+        f.attrs['filetype'] = np.string_('data_neutron')
         f.attrs['version'] = np.array(HDF5_VERSION)
 
         # Write basic data
@@ -521,14 +446,19 @@ class IncidentNeutron(EqualityMixin):
         # Write reaction data
         rxs_group = g.create_group('reactions')
         for rx in self.reactions.values():
+            # Skip writing redundant reaction if it doesn't have photon
+            # production or is a summed transmutation reaction. MT=4 is also
+            # sometimes needed for probability tables. Also write gas
+            # production, heating, and damage energy production.
+            if rx.redundant:
+                photon_rx = any(p.particle == 'photon' for p in rx.products)
+                keep_mts = (4, 16, 103, 104, 105, 106, 107,
+                            203, 204, 205, 206, 207, 301, 444)
+                if not (photon_rx or rx.mt in keep_mts):
+                    continue
+
             rx_group = rxs_group.create_group('reaction_{:03}'.format(rx.mt))
             rx.to_hdf5(rx_group)
-
-            # Write 0K elastic scattering if needed
-            if '0K' in rx.xs and '0K' not in rx_group:
-                group = rx_group.create_group('0K')
-                dset = group.create_dataset('xs', data=rx.xs['0K'].y)
-                dset.attrs['threshold_idx'] = 1
 
             # Write total nu data if available
             if len(rx.derived_products) > 0 and 'total_nu' not in g:
@@ -569,16 +499,12 @@ class IncidentNeutron(EqualityMixin):
         if isinstance(group_or_filename, h5py.Group):
             group = group_or_filename
         else:
-            h5file = h5py.File(group_or_filename, 'r')
+            h5file = h5py.File(str(group_or_filename), 'r')
 
             # Make sure version matches
             if 'version' in h5file.attrs:
                 major, minor = h5file.attrs['version']
-                if major != HDF5_VERSION_MAJOR:
-                    raise IOError(
-                        'HDF5 data format uses version {}.{} whereas your '
-                        'installation of the OpenMC Python API expects version '
-                        '{}.x.'.format(major, minor, HDF5_VERSION_MAJOR))
+                # For now all versions of HDF5 data can be read
             else:
                 raise IOError(
                     'HDF5 data does not indicate a version. Your installation of '
@@ -595,7 +521,7 @@ class IncidentNeutron(EqualityMixin):
         kTg = group['kTs']
         kTs = []
         for temp in kTg:
-            kTs.append(kTg[temp].value)
+            kTs.append(kTg[temp][()])
 
         data = cls(name, atomic_number, mass_number, metastable,
                    atomic_weight_ratio, kTs)
@@ -603,7 +529,7 @@ class IncidentNeutron(EqualityMixin):
         # Read energy grid
         e_group = group['energy']
         for temperature, dset in e_group.items():
-            data.energy[temperature] = dset.value
+            data.energy[temperature] = dset[()]
 
         # Read reaction data
         rxs_group = group['reactions']
@@ -616,19 +542,6 @@ class IncidentNeutron(EqualityMixin):
                 if rx.mt in (18, 19, 20, 21, 38) and 'total_nu' in group:
                     tgroup = group['total_nu']
                     rx.derived_products.append(Product.from_hdf5(tgroup))
-
-        # Build summed reactions.  Start from the highest MT number because
-        # high MTs never depend on lower MTs.
-        for mt_sum in sorted(SUM_RULES, reverse=True):
-            if mt_sum not in data:
-                rxs = [data[mt] for mt in SUM_RULES[mt_sum] if mt in data]
-                if len(rxs) > 0:
-                    data.summed_reactions[mt_sum] = rx = Reaction(mt_sum)
-                    if rx.mt == 18 and 'total_nu' in group:
-                        tgroup = group['total_nu']
-                        rx.derived_products.append(Product.from_hdf5(tgroup))
-                    for T in data.temperatures:
-                        rx.xs[T] = Sum([rx_i.xs[T] for rx_i in rxs])
 
         # Read unresolved resonance probability tables
         if 'urr' in group:
@@ -677,7 +590,7 @@ class IncidentNeutron(EqualityMixin):
         # If mass number hasn't been specified, make an educated guess
         zaid, xs = ace.name.split('.')
         name, element, Z, mass_number, metastable = \
-            _get_metadata(int(zaid), metastable_scheme)
+            get_metadata(int(zaid), metastable_scheme)
 
         # Assign temperature to the running list
         kTs = [ace.temperature*EV_PER_MEV]
@@ -690,21 +603,29 @@ class IncidentNeutron(EqualityMixin):
 
         # Read energy grid
         n_energy = ace.nxs[3]
-        energy = ace.xss[ace.jxs[1]:ace.jxs[1] + n_energy]*EV_PER_MEV
+        i = ace.jxs[1]
+        energy = ace.xss[i : i + n_energy]*EV_PER_MEV
         data.energy[strT] = energy
-        total_xs = ace.xss[ace.jxs[1] + n_energy:ace.jxs[1] + 2 * n_energy]
-        absorption_xs = ace.xss[ace.jxs[1] + 2 * n_energy:ace.jxs[1] +
-                                3 * n_energy]
+        total_xs = ace.xss[i + n_energy : i + 2*n_energy]
+        absorption_xs = ace.xss[i + 2*n_energy : i + 3*n_energy]
+        heating_number = ace.xss[i + 4*n_energy : i + 5*n_energy]*EV_PER_MEV
 
-        # Create summed reactions (total and absorption)
+        # Create redundant reactions (total, absorption, and heating)
         total = Reaction(1)
         total.xs[strT] = Tabulated1D(energy, total_xs)
-        data.summed_reactions[1] = total
+        total.redundant = True
+        data.reactions[1] = total
 
         if np.count_nonzero(absorption_xs) > 0:
-            absorption = Reaction(27)
+            absorption = Reaction(101)
             absorption.xs[strT] = Tabulated1D(energy, absorption_xs)
-            data.summed_reactions[27] = absorption
+            absorption.redundant = True
+            data.reactions[101] = absorption
+
+        heating = Reaction(301)
+        heating.xs[strT] = Tabulated1D(energy, heating_number*total_xs)
+        heating.redundant = True
+        data.reactions[301] = heating
 
         # Read each reaction
         n_reaction = ace.nxs[4] + 1
@@ -726,19 +647,42 @@ class IncidentNeutron(EqualityMixin):
                          'cross section is given.'.format(mt))
                     continue
 
-                # Create summed reaction with appropriate cross section
-                rx = Reaction(mt)
+                # Create redundant reaction with appropriate cross section
                 mts = data.get_reaction_components(mt)
                 if len(mts) == 0:
                     warn('Photon production is present for MT={} but no '
                          'reaction components exist.'.format(mt))
                     continue
-                rx.xs[strT] = Sum([data.reactions[mt_i].xs[strT]
-                                   for mt_i in mts])
 
-                # Determine summed cross section
+                # Determine redundant cross section
+                rx = data._get_redundant_reaction(mt, mts)
                 rx.products += _get_photon_products_ace(ace, rx)
-                data.summed_reactions[mt] = rx
+                data.reactions[mt] = rx
+
+        # For transmutation reactions, sometimes only individual levels are
+        # present in an ACE file, e.g. MT=600-649 instead of the summation
+        # MT=103. In this case, if a user wants to tally (n,p), OpenMC doesn't
+        # know about the total cross section. Here, we explicitly create a
+        # redundant reaction for this purpose.
+        for mt in (16, 103, 104, 105, 106, 107):
+            if mt not in data:
+                # Determine if any individual levels are present
+                mts = data.get_reaction_components(mt)
+                if len(mts) == 0:
+                    continue
+
+                # Determine redundant cross section
+                rx = data._get_redundant_reaction(mt, mts)
+                data.reactions[mt] = rx
+
+        # Make sure redundant cross sections that are present in an ACE file get
+        # marked as such
+        for rx in data:
+            mts = data.get_reaction_components(rx.mt)
+            if mts != [rx.mt]:
+                rx.redundant = True
+            if rx.mt in (203, 204, 205, 206, 207, 444):
+                rx.redundant = True
 
         # Read unresolved resonance probability tables
         urr = ProbabilityTables.from_ace(ace)
@@ -748,7 +692,7 @@ class IncidentNeutron(EqualityMixin):
         return data
 
     @classmethod
-    def from_endf(cls, ev_or_filename):
+    def from_endf(cls, ev_or_filename, covariance=False):
         """Generate incident neutron continuous-energy data from an ENDF evaluation
 
         Parameters
@@ -756,6 +700,10 @@ class IncidentNeutron(EqualityMixin):
         ev_or_filename : openmc.data.endf.Evaluation or str
             ENDF evaluation to read from. If given as a string, it is assumed to
             be the filename for the ENDF file.
+
+        covariance : bool
+            Flag to indicate whether or not covariance data from File 32 should be
+            retrieved
 
         Returns
         -------
@@ -787,6 +735,11 @@ class IncidentNeutron(EqualityMixin):
 
         if (2, 151) in ev.section:
             data.resonances = res.Resonances.from_endf(ev)
+
+        if (32, 151) in ev.section and covariance:
+            data.resonance_covariance = (
+                res_cov.ResonanceCovariances.from_endf(ev, data.resonances)
+            )
 
         # Read each reaction
         for mf, mt, nc, mod in ev.reaction_list:
@@ -824,16 +777,19 @@ class IncidentNeutron(EqualityMixin):
         return data
 
     @classmethod
-    def from_njoy(cls, filename, temperatures=None, **kwargs):
+    def from_njoy(cls, filename, temperatures=None, evaluation=None, **kwargs):
         """Generate incident neutron data by running NJOY.
 
         Parameters
         ----------
         filename : str
-            Path to ENDF evaluation
+            Path to ENDF file
         temperatures : iterable of float
             Temperatures in Kelvin to produce data at. If omitted, data is
             produced at room temperature (293.6 K)
+        evaluation : openmc.data.endf.Evaluation, optional
+            If the ENDF file contains multiple material evaluations, this
+            argument indicates which evaluation to use.
         **kwargs
             Keyword arguments passed to :func:`openmc.data.njoy.make_ace`
 
@@ -843,39 +799,62 @@ class IncidentNeutron(EqualityMixin):
             Incident neutron continuous-energy data
 
         """
-        # Create temporary directory -- it would be preferable to use
-        # TemporaryDirectory(), but it is only available in Python 3.2
-        tmpdir = tempfile.mkdtemp()
-        try:
+        with tempfile.TemporaryDirectory() as tmpdir:
             # Run NJOY to create an ACE library
-            ace_file = os.path.join(tmpdir, 'ace')
-            xsdir_file = os.path.join(tmpdir, 'xsdir')
-            pendf_file = os.path.join(tmpdir, 'pendf')
-            make_ace(filename, temperatures, ace_file, xsdir_file,
-                     pendf_file, **kwargs)
+            kwargs.setdefault('ace', os.path.join(tmpdir, 'ace'))
+            kwargs.setdefault('xsdir', os.path.join(tmpdir, 'xsdir'))
+            kwargs.setdefault('pendf', os.path.join(tmpdir, 'pendf'))
+            kwargs['evaluation'] = evaluation
+            make_ace(filename, temperatures, **kwargs)
 
             # Create instance from ACE tables within library
-            lib = Library(ace_file)
+            lib = Library(kwargs['ace'])
             data = cls.from_ace(lib.tables[0])
             for table in lib.tables[1:]:
                 data.add_temperature_from_ace(table)
 
             # Add fission energy release data
-            ev = Evaluation(filename)
+            ev = evaluation if evaluation is not None else Evaluation(filename)
             if (1, 458) in ev.section:
                 data.fission_energy = FissionEnergyRelease.from_endf(ev, data)
 
             # Add 0K elastic scattering cross section
             if '0K' not in data.energy:
-                pendf = Evaluation(pendf_file)
+                pendf = Evaluation(kwargs['pendf'])
                 file_obj = StringIO(pendf.section[3, 2])
                 get_head_record(file_obj)
                 params, xs = get_tab1_record(file_obj)
                 data.energy['0K'] = xs.x
                 data[2].xs['0K'] = xs
 
-        finally:
-            # Get rid of temporary files
-            shutil.rmtree(tmpdir)
-
         return data
+
+    def _get_redundant_reaction(self, mt, mts):
+        """Create redundant reaction from its components
+
+        Parameters
+        ----------
+        mt : int
+            MT value of the desired reaction
+        mts : iterable of int
+            MT values of its components
+
+        Returns
+        -------
+        openmc.Reaction
+            Redundant reaction
+
+        """
+        # Get energy grid
+        strT = self.temperatures[0]
+        energy = self.energy[strT]
+
+        rx = Reaction(mt)
+        xss = [self.reactions[mt_i].xs[strT] for mt_i in mts]
+        idx = min([xs._threshold_idx if hasattr(xs, '_threshold_idx')
+                   else 0 for xs in xss])
+        rx.xs[strT] = Tabulated1D(energy[idx:], Sum(xss)(energy[idx:]))
+        rx.xs[strT]._threshold_idx = idx
+        rx.redundant = True
+
+        return rx

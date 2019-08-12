@@ -1,4 +1,5 @@
-from collections import OrderedDict, Iterable
+from collections import OrderedDict
+from collections.abc import Iterable
 from copy import deepcopy
 from math import cos, sin, pi
 from numbers import Real, Integral
@@ -6,13 +7,13 @@ from xml.etree import ElementTree as ET
 import sys
 import warnings
 
-from six import string_types
 import numpy as np
 
 import openmc
 import openmc.checkvalue as cv
 from openmc.surface import Halfspace
 from openmc.region import Region, Intersection, Complement
+from openmc._xml import get_text
 from .mixin import IDManagerMixin
 
 
@@ -56,7 +57,7 @@ class Cell(IDManagerMixin):
 
         .. math::
 
-           \left [ \begin{array}{ccc} \cos\theta \cos\psi & -\cos\theta \sin\psi
+           \left [ \begin{array}{ccc} \cos\theta \cos\psi & -\cos\phi \sin\psi
            + \sin\phi \sin\theta \cos\psi & \sin\phi \sin\psi + \cos\phi
            \sin\theta \cos\psi \\ \cos\theta \sin\psi & \cos\phi \cos\psi +
            \sin\phi \sin\theta \sin\psi & -\sin\phi \cos\psi + \cos\phi
@@ -107,32 +108,6 @@ class Cell(IDManagerMixin):
             return True
         else:
             return point in self.region
-
-    def __eq__(self, other):
-        if not isinstance(other, Cell):
-            return False
-        elif self.id != other.id:
-            return False
-        elif self.name != other.name:
-            return False
-        elif self.fill != other.fill:
-            return False
-        elif self.region != other.region:
-            return False
-        elif self.rotation != other.rotation:
-            return False
-        elif self.temperature != other.temperature:
-            return False
-        elif self.translation != other.translation:
-            return False
-        else:
-            return True
-
-    def __ne__(self, other):
-        return not self == other
-
-    def __hash__(self):
-        return hash(repr(self))
 
     def __repr__(self):
         string = 'Cell\n'
@@ -229,7 +204,7 @@ class Cell(IDManagerMixin):
     @name.setter
     def name(self, name):
         if name is not None:
-            cv.check_type('cell name', name, string_types)
+            cv.check_type('cell name', name, str)
             self._name = name
         else:
             self._name = ''
@@ -237,14 +212,7 @@ class Cell(IDManagerMixin):
     @fill.setter
     def fill(self, fill):
         if fill is not None:
-            if isinstance(fill, string_types):
-                if fill.strip().lower() != 'void':
-                    msg = 'Unable to set Cell ID="{0}" to use a non-Material ' \
-                          'or Universe fill "{1}"'.format(self._id, fill)
-                    raise ValueError(msg)
-                fill = None
-
-            elif isinstance(fill, Iterable):
+            if isinstance(fill, Iterable):
                 for i, f in enumerate(fill):
                     if f is not None:
                         cv.check_type('cell.fill[i]', f, openmc.Material)
@@ -259,10 +227,6 @@ class Cell(IDManagerMixin):
 
     @rotation.setter
     def rotation(self, rotation):
-        if not isinstance(self.fill, openmc.Universe):
-            raise TypeError('Cell rotation can only be applied if the cell '
-                            'is filled with a Universe.')
-
         cv.check_type('cell rotation', rotation, Iterable, Real)
         cv.check_length('cell rotation', rotation, 3)
         self._rotation = np.asarray(rotation)
@@ -317,50 +281,6 @@ class Cell(IDManagerMixin):
             cv.check_type('cell volume', volume, Real)
         self._volume = volume
 
-    def add_surface(self, surface, halfspace):
-        """Add a half-space to the list of half-spaces whose intersection defines the
-        cell.
-
-        .. deprecated:: 0.7.1
-            Use the :attr:`Cell.region` property to directly specify a Region
-            expression.
-
-        Parameters
-        ----------
-        surface : openmc.Surface
-            Quadric surface dividing space
-        halfspace : {-1, 1}
-            Indicate whether the negative or positive half-space is to be used
-
-        """
-
-        warnings.warn("Cell.add_surface(...) has been deprecated and may be "
-                      "removed in a future version. The region for a Cell "
-                      "should be defined using the region property directly.",
-                      DeprecationWarning)
-
-        if not isinstance(surface, openmc.Surface):
-            msg = 'Unable to add Surface "{0}" to Cell ID="{1}" since it is ' \
-                        'not a Surface object'.format(surface, self._id)
-            raise ValueError(msg)
-
-        if halfspace not in [-1, +1]:
-            msg = 'Unable to add Surface "{0}" to Cell ID="{1}" with halfspace ' \
-                  '"{2}" since it is not +/-1'.format(surface, self._id, halfspace)
-            raise ValueError(msg)
-
-        # If no region has been assigned, simply use the half-space. Otherwise,
-        # take the intersection of the current region and the half-space
-        # specified
-        region = +surface if halfspace == 1 else -surface
-        if self.region is None:
-            self.region = region
-        else:
-            if isinstance(self.region, Intersection):
-                self.region &= region
-            else:
-                self.region = Intersection(self.region, region)
-
     def add_volume_information(self, volume_calc):
         """Add volume information to a cell.
 
@@ -372,7 +292,7 @@ class Cell(IDManagerMixin):
         """
         if volume_calc.domain_type == 'cell':
             if self.id in volume_calc.volumes:
-                self._volume = volume_calc.volumes[self.id][0]
+                self._volume = volume_calc.volumes[self.id].n
                 self._atoms = volume_calc.atoms[self.id]
             else:
                 raise ValueError('No volume information found for this cell.')
@@ -412,7 +332,7 @@ class Cell(IDManagerMixin):
                 volume = self.volume
                 for name, atoms in self._atoms.items():
                     nuclide = openmc.Nuclide(name)
-                    density = 1.0e-24 * atoms[0]/volume  # density in atoms/b-cm
+                    density = 1.0e-24 * atoms.n/volume  # density in atoms/b-cm
                     nuclides[name] = (nuclide, density)
             else:
                 raise RuntimeError(
@@ -599,3 +519,64 @@ class Cell(IDManagerMixin):
             element.set("rotation", ' '.join(map(str, self.rotation)))
 
         return element
+
+    @classmethod
+    def from_xml_element(cls, elem, surfaces, materials, get_universe):
+        """Generate cell from XML element
+
+        Parameters
+        ----------
+        elem : xml.etree.ElementTree.Element
+            `<cell>` element
+        surfaces : dict
+            Dictionary mapping surface IDs to :class:`openmc.Surface` instances
+        materials : dict
+            Dictionary mapping material IDs to :class:`openmc.Material`
+            instances (defined in :math:`openmc.Geometry.from_xml`)
+        get_universe : function
+            Function returning universe (defined in
+            :meth:`openmc.Geometry.from_xml`)
+
+        Returns
+        -------
+        Cell
+            Cell instance
+
+        """
+        cell_id = int(get_text(elem, 'id'))
+        name = get_text(elem, 'name')
+        c = cls(cell_id, name)
+
+        # Assign material/distributed materials or fill
+        mat_text = get_text(elem, 'material')
+        if mat_text is not None:
+            mat_ids = mat_text.split()
+            if len(mat_ids) > 1:
+                c.fill = [materials[i] for i in mat_ids]
+            else:
+                c.fill = materials[mat_ids[0]]
+        else:
+            fill_id = int(get_text(elem, 'fill'))
+            c.fill = get_universe(fill_id)
+
+        # Assign region
+        region = get_text(elem, 'region')
+        if region is not None:
+            c.region = Region.from_expression(region, surfaces)
+
+        # Check for other attributes
+        t = get_text(elem, 'temperature')
+        if t is not None:
+            if ' ' in t:
+                c.temperature = [float(t_i) for t_i in t.split()]
+            else:
+                c.temperature = float(t)
+        for key in ('temperature', 'rotation', 'translation'):
+            value = get_text(elem, key)
+            if value is not None:
+                setattr(c, key, [float(x) for x in value.split()])
+
+        # Add this cell to appropriate universe
+        univ_id = int(get_text(elem, 'universe', 0))
+        get_universe(univ_id).add_cell(c)
+        return c

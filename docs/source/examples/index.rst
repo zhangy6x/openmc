@@ -1,17 +1,16 @@
 .. _examples:
 
-=================
-Example Notebooks
-=================
+========
+Examples
+========
 
-The following series of Jupyter_ Notebooks provide examples for usage of OpenMC
-features via the :ref:`pythonapi`.
+The following series of `Jupyter <https://jupyter.org/>`_ Notebooks provide
+examples for how to use various features of OpenMC by leveraging the
+:ref:`pythonapi`.
 
-.. _Jupyter: https://jupyter.org/
-
------------
-Basic Usage
------------
+-------------
+General Usage
+-------------
 
 .. toctree::
     :maxdepth: 1
@@ -20,10 +19,22 @@ Basic Usage
     post-processing
     pandas-dataframes
     tally-arithmetic
+    expansion-filters
     search
+    nuclear-data
+    nuclear-data-resonance-covariance
+    cad-geom
+
+--------
+Geometry
+--------
+
+.. toctree::
+    :maxdepth: 1
+
+    hexagonal
     triso
     candu
-    nuclear-data
 
 ------------------------------------
 Multi-Group Cross Section Generation

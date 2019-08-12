@@ -1,11 +1,11 @@
 import os
 import xml.etree.ElementTree as ET
-from six import string_types
+import pathlib
 
 import h5py
 
 from openmc.mixin import EqualityMixin
-from openmc.clean_xml import clean_xml_indentation
+from openmc._xml import clean_indentation
 from openmc.checkvalue import check_type
 
 
@@ -24,8 +24,13 @@ class DataLibrary(EqualityMixin):
     def __init__(self):
         self.libraries = []
 
-    def get_by_material(self, value):
+    def get_by_material(self, name):
         """Return the library dictionary containing a given material.
+
+        Parameters
+        ----------
+        name : str
+            Name of material, e.g. 'Am241'
 
         Returns
         -------
@@ -35,7 +40,7 @@ class DataLibrary(EqualityMixin):
 
         """
         for library in self.libraries:
-            if value in library['materials']:
+            if name in library['materials']:
                 return library
         return None
 
@@ -44,20 +49,30 @@ class DataLibrary(EqualityMixin):
 
         Parameters
         ----------
-        filename : str
+        filename : str or Path
             Path to the file to be registered.
+            If an ``xml`` file, treat as the depletion chain file without
+            materials.
 
         """
-        h5file = h5py.File(filename, 'r')
+        if not isinstance(filename, pathlib.Path):
+            path = pathlib.Path(filename)
+        else:
+            path = filename
 
-        materials = []
-        filetype = 'neutron'
-        for name in h5file:
-            if name.startswith('c_'):
-                filetype = 'thermal'
-            materials.append(name)
+        if path.suffix == '.xml':
+            filetype = 'depletion_chain'
+            materials = []
+        elif path.suffix == '.h5':
+            with h5py.File(path, 'r') as h5file:
+                filetype = h5file.attrs['filetype'].decode()[5:]
+                materials = list(h5file)
+        else:
+            raise ValueError(
+                "File type {} not supported by {}"
+                .format(path.name, self.__class__.__name__))
 
-        library = {'path': filename, 'type': filetype, 'materials': materials}
+        library = {'path': str(path), 'type': filetype, 'materials': materials}
         self.libraries.append(library)
 
     def export_to_xml(self, path='cross_sections.xml'):
@@ -77,23 +92,25 @@ class DataLibrary(EqualityMixin):
         if common_dir == '':
             common_dir = '.'
 
-        directory = os.path.relpath(common_dir, os.path.dirname(path))
-        if directory != '.':
+        if os.path.relpath(common_dir, os.path.dirname(str(path))) != '.':
             dir_element = ET.SubElement(root, "directory")
-            dir_element.text = directory
+            dir_element.text = os.path.realpath(common_dir)
 
         for library in self.libraries:
-            lib_element = ET.SubElement(root, "library")
-            lib_element.set('materials', ' '.join(library['materials']))
+            if library['type'] == "depletion_chain":
+                lib_element = ET.SubElement(root, "depletion_chain")
+            else:
+                lib_element = ET.SubElement(root, "library")
+                lib_element.set('materials', ' '.join(library['materials']))
             lib_element.set('path', os.path.relpath(library['path'], common_dir))
             lib_element.set('type', library['type'])
 
         # Clean the indentation to be user-readable
-        clean_xml_indentation(root)
+        clean_indentation(root)
 
         # Write XML file
         tree = ET.ElementTree(root)
-        tree.write(path, xml_declaration=True, encoding='utf-8',
+        tree.write(str(path), xml_declaration=True, encoding='utf-8',
                    method='xml')
 
     @classmethod
@@ -104,7 +121,7 @@ class DataLibrary(EqualityMixin):
         ----------
         path : str, optional
             Path to XML file to read. If not provided, the
-            `OPENMC_CROSS_SECTIONS` environment variable will be  used.
+            :envvar:`OPENMC_CROSS_SECTIONS` environment variable will be  used.
 
         Returns
         -------
@@ -125,7 +142,9 @@ class DataLibrary(EqualityMixin):
             raise ValueError("Either path or OPENMC_CROSS_SECTIONS "
                              "environmental variable must be set")
 
-        check_type('path', path, string_types)
+        # Convert to string to support pathlib
+        # TODO: Remove when support is Python 3.6+ only
+        path = str(path)
 
         tree = ET.parse(path)
         root = tree.getroot()
@@ -140,6 +159,15 @@ class DataLibrary(EqualityMixin):
             materials = lib_element.attrib['materials'].split()
             library = {'path': filename, 'type': filetype,
                        'materials': materials}
+            data.libraries.append(library)
+
+        # get depletion chain data
+
+        dep_node = root.find("depletion_chain")
+        if dep_node is not None:
+            filename = os.path.join(directory, dep_node.attrib['path'])
+            library = {'path': filename, 'type': 'depletion_chain',
+                       'materials': []}
             data.libraries.append(library)
 
         return data
